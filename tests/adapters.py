@@ -9,7 +9,7 @@ import numpy.typing as npt
 import torch
 from torch import Tensor
 
-
+from cs336_basics.linear import linear
 
 def run_linear(
     d_in: int,
@@ -30,7 +30,8 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
 
-    return torch.matmul(in_features, weights.T)
+    return linear(weights, in_features)
+    
 
 
 def run_embedding(
@@ -77,6 +78,7 @@ def run_swiglu(
     Returns:
         Float[Tensor, "... d_model"]: Output embeddings of the same shape as the input embeddings.
     """
+
     # Example:
     # If your state dict keys match, you can use `load_state_dict()`
     # swiglu.load_state_dict(weights)
