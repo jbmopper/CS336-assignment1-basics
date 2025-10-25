@@ -9,8 +9,7 @@ import numpy.typing as npt
 import torch
 from torch import Tensor
 
-from cs336_basics.linear import linear
-from cs336_basics.embeddings import embeddings
+from cs336_basics.implementations import *
 
 def run_linear(
     d_in: int,
