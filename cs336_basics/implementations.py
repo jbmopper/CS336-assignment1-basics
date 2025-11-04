@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 
-__all__ = ['linear', 'embeddings', "SwiGLU", "rmsnorm", "softmax"]
+__all__ = ['linear', 'embeddings', "SwiGLU", "rmsnorm", "softmax", "silu"]
 
 def linear(weights, in_features):
     return torch.matmul(in_features, weights.T)
@@ -36,7 +36,9 @@ def rmsnorm(eps, weights, in_features):
     return (in_features/rms) * weights
 
 def softmax(in_features, dim):
-    zeroed_features = in_features - torch.mean(in_features, dim=dim, keepdim=True)
-    exp_features = torch.exp(zeroed_features)
+    adjusted_features = in_features - torch.max(in_features)
+    exp_features = torch.exp(adjusted_features)
     return exp_features / torch.sum(exp_features, dim=dim, keepdim=True)
 
+def silu(in_features):
+    return in_features * torch.sigmoid(in_features)
