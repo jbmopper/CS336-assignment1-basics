@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 
-__all__ = ['linear', 'embeddings', "SwiGLU"]
+__all__ = ['linear', 'embeddings', "SwiGLU", "rmsnorm", "softmax"]
 
 def linear(weights, in_features):
     return torch.matmul(in_features, weights.T)
@@ -25,3 +25,18 @@ class SwiGLU(nn.Module):
 
     def forward(self, x):
         return self.w2(self.swish(self.w1(x))*self.w3(x))
+
+def rmsnorm(eps, weights, in_features):
+    """
+    rms_norm = nn.RMSNorm(d_model, eps=eps)
+    rms_norm.weight.data = weights
+    return rms_norm(in_features)
+    """
+    rms = torch.sqrt(eps + torch.mean(in_features ** 2, dim=-1, keepdim=True))
+    return (in_features/rms) * weights
+
+def softmax(in_features, dim):
+    zeroed_features = in_features - torch.mean(in_features, dim=dim, keepdim=True)
+    exp_features = torch.exp(zeroed_features)
+    return exp_features / torch.sum(exp_features, dim=dim, keepdim=True)
+
