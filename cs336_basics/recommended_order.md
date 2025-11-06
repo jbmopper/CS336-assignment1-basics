@@ -5,7 +5,7 @@
    - Test: `tests/test_model.py::test_linear`
 2. ✅ `run_embedding` - Token embeddings
    - Test: `tests/test_model.py::test_embedding`
-3. `run_silu` - SiLU/Swish activation
+3. ✅ `run_silu` - SiLU/Swish activation
    - Test: `tests/test_model.py::test_silu_matches_pytorch`
 4. ✅ `run_softmax` - Softmax normalization (watch for numerical stability!)
    - Test: `tests/test_nn_utils.py::test_softmax_matches_pytorch`
@@ -53,17 +53,4 @@
     - Test: `tests/test_train_bpe.py::test_train_bpe`
     - Test: `tests/test_train_bpe.py::test_train_bpe_special_tokens`
     - Test: `tests/test_train_bpe.py::test_train_bpe_speed`
-
-## Why this order?
-
-- **Bottom-up**: Build simple pieces first, combine into complex ones
-- **Dependencies**: Each tier uses components from previous tiers
-- **Testing**: You can test as you go and see progress
-- **Learning**: Follows the conceptual flow of how transformers work
-
-## Notes
-
-- Tiers 4 and 5 are mostly independent and can be done in any order
-- Some functions in Tier 1 are trivial wrappers (like `run_silu`)
-- The core learning happens in Tiers 2 and 3 (attention and transformers)
 

@@ -4,7 +4,10 @@ import torch.nn.functional as F
 
 
 
-__all__ = ['linear', 'embeddings', "SwiGLU", "rmsnorm", "softmax", "silu"]
+__all__ =   [ 
+                'linear', 'embeddings', "SwiGLU", "rmsnorm", "softmax", "silu",
+                'crossentropy'
+            ]
 
 def linear(weights, in_features):
     return torch.matmul(in_features, weights.T)
@@ -42,3 +45,13 @@ def softmax(in_features, dim):
 
 def silu(in_features):
     return in_features * torch.sigmoid(in_features)
+
+def crossentropy(inputs, targets):
+    # for each batch, the target has the index of the correct class
+    # so if that is class c, the cross entropy is just -log(input[c])
+    # thus select the target index from the input and average -log values
+    rows = torch.arange(inputs.shape[0])
+    probs = torch.log_softmax(inputs, dim=1) # researched numerical stability
+    used_probs = probs[rows, targets] 
+    return -torch.mean(used_probs)
+    

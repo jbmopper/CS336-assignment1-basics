@@ -10,6 +10,7 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 from cs336_basics.implementations import *
+from cs336_basics.implementations import crossentropy
 
 def run_linear(
     d_in: int,
@@ -456,14 +457,15 @@ def run_cross_entropy(
 
     Args:
         inputs (Float[Tensor, "batch_size vocab_size"]): inputs[i][j] is the
-            unnormalized logit of jth class for the ith example.
+            unnormalized logit of jth class for the ith example
         targets (Int[Tensor, "batch_size"]): Tensor of shape (batch_size,) with the index of the correct class.
             Each value must be between 0 and `num_classes - 1`.
 
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    # raise NotImplementedError
+    return crossentropy(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
