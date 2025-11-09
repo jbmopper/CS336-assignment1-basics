@@ -33,7 +33,7 @@
     - Test: `tests/test_model.py::test_transformer_lm_truncated_input`
 
 ## Tier 4: Training utilities (can do in any order)
-13. `run_cross_entropy` - Cross-entropy loss function
+13. ✅ `run_cross_entropy` - Cross-entropy loss function
     - Test: `tests/test_nn_utils.py::test_cross_entropy`
 14. `run_get_batch` - Data loading/sampling
     - Test: `tests/test_data.py::test_get_batch`

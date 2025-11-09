@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 
 __all__ =   [ 
-                'linear', 'embeddings', "SwiGLU", "rmsnorm", "softmax", "silu",
+                'linear', 'embeddings', 'SwiGLU', 'rmsnorm', 'softmax', 'silu',
                 'crossentropy', 'scaled_dot_product_attention'
             ]
 
