@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 __all__ =   [ 
                 'linear', 'embeddings', "SwiGLU", "rmsnorm", "softmax", "silu",
-                'crossentropy'
+                'crossentropy', 'scaled_dot_product_attention'
             ]
 
 def linear(weights, in_features):
@@ -55,3 +55,8 @@ def crossentropy(inputs, targets):
     used_probs = probs[rows, targets] 
     return -torch.mean(used_probs)
     
+def scaled_dot_product_attention(Q, K, V, mask):
+    d_k = Q.size(-1)
+    scaled_product = (Q @ K.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k, dtype=Q.dtype))
+    masked_product = softmax(scaled_product, -1) * mask
+    return masked_product @ V
