@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from torch import Tensor
+from jaxtyping import Float, Int, Bool
 
 
 __all__ =   [ 
@@ -55,8 +56,16 @@ def crossentropy(inputs, targets):
     used_probs = probs[rows, targets] 
     return -torch.mean(used_probs)
     
-def scaled_dot_product_attention(Q, K, V, mask):
+def scaled_dot_product_attention(
+    Q: Float[Tensor, "... queries d_k"],
+    K: Float[Tensor, "... keys d_k"],
+    V: Float[Tensor, "... values d_v"],
+    mask: Bool[Tensor, "... queries keys"] | None = None
+) -> Float[Tensor, "... queries d_v"]:
+
     d_k = Q.size(-1)
     scaled_product = (Q @ K.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k, dtype=Q.dtype))
-    masked_product = softmax(scaled_product, -1) * mask
-    return masked_product @ V
+    if mask is not None: 
+        scaled_product = scaled_product.masked_fill_(~mask, float('-inf'))
+    output = softmax(scaled_product, -1) @ V
+    return output
