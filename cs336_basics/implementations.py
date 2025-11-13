@@ -69,3 +69,38 @@ def scaled_dot_product_attention(
         scaled_product = scaled_product.masked_fill_(~mask, float('-inf'))
     output = softmax(scaled_product, -1) @ V
     return output
+
+def rope(  d_k: int,
+    theta: float,
+    max_seq_len: int,
+    in_query_or_key: Float[Tensor, " ... sequence_length d_k"],
+    token_positions: Int[Tensor, " ... sequence_length"],
+) -> Float[Tensor, " ... sequence_length d_k"]:
+    """
+    theta_i = theta^(-2(i-1)/d) where d in {1...d_k/2} (?)
+    originally 1000^(-2(i-1)/d)
+    in_query_or_key is W^k@X or W^q@X
+    for each x in X (up to sequence length), generate the
+    vectors (per section 3.4.2) [cos(m*theta_i)] and [sin(m*theta_i)]
+    ...no, this is a whole R_theta approach, apparently...
+    so we want to generate a block matrix for the m*theta_i's
+    for each m up to max_sequence_length
+    """
+    assert d_k % 2 == 0
+    thetas = torch.ones(d_k / 2) * theta
+    theta_exponents = (-2 * torch.arange(d_k / 2)) / (d_k / 2)
+    thetas = thetas ** theta_exponents
+
+    ms = token_positions[..., : max_seq_len]
+    mthetas = ms.unsqueeze(-1) * thetas.unsqueeze(0) # [..., max_seq_len, d_k/2]
+    # still have inputs in rows (?) and want R tensor [..., d_k, max_seq_len]
+    # so each R slice goes across the columns 
+    coses = torch.cos(mthetas)
+    sines = torch.sin(mthetas)
+
+
+
+
+
+
+
