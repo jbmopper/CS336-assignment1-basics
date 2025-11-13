@@ -7,7 +7,7 @@ from jaxtyping import Float, Int, Bool
 
 __all__ =   [ 
                 'linear', 'embeddings', 'SwiGLU', 'rmsnorm', 'softmax', 'silu',
-                'crossentropy', 'scaled_dot_product_attention'
+                'crossentropy', 'scaled_dot_product_attention', 'rope'
             ]
 
 def linear(weights, in_features):
@@ -87,8 +87,9 @@ def rope(  d_k: int,
     for each m up to max_sequence_length
     """
     assert d_k % 2 == 0
-    thetas = torch.ones(d_k / 2) * theta
-    theta_exponents = (-2 * torch.arange(d_k / 2)) / (d_k / 2)
+    dk2 = d_k // 2
+    thetas = torch.ones(dk2) * theta
+    theta_exponents = (-2 * torch.arange(dk2)) / (dk2)
     thetas = thetas ** theta_exponents
 
     ms = token_positions[..., : max_seq_len]
@@ -96,7 +97,31 @@ def rope(  d_k: int,
     # still have inputs in rows (?) and want R tensor [..., d_k, max_seq_len]
     # so each R slice goes across the columns 
     coses = torch.cos(mthetas)
+    coses_diag = torch.repeat_interleave(coses, 2, dim=-1)
     sines = torch.sin(mthetas)
+    neg_sines = -sines
+    R = torch.diag_embed(coses_diag) # [..., max_seq_len, d, d]
+    print("")
+    print("R shape: ", R.shape)
+    print("sines shape:, ", sines.shape)
+    indices = torch.arange(dk2)
+    print("indices: ", indices)
+    R[..., (indices * 2), (indices * 2) + 1] = neg_sines[..., indices] 
+    # zero-indexed rows 0, 2, ... (dim -2); columns 1, 3... (dim -1) 
+    R[..., (indices * 2) + 1, (indices * 2)] = sines[..., indices] 
+    # zero-indexed rows 1, 3, ... (dim -2); columns 0, 2... (dim -1) 
+    print("q/k vector/matrix shape: ", in_query_or_key.shape)
+    R.unsqueeze(0) #The size of tensor a (12) must match the size of tensor b (4) at non-singleton dimen...
+    # in_query_or_key.unsqueeze_(-1) #The size of tensor a (12) must match the size of tensor b (4) at non-singleton dimen...
+    
+    # 4 batches, it seems
+    # R = torch.stack(R, R, R, R)
+    # batches = in_query_or_key.size(0)
+    # R =  R.unsqueeze(0).expand(batches, -1, -1, -1)
+    print("R shape 2: ", R.shape)
+    # return ( in_query_or_key @ R)
+    return (R @ in_query_or_key.transpose(-2, -1)).transpose(-2, -1)
+
 
 
 
