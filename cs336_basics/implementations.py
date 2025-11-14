@@ -123,17 +123,47 @@ def multihead_self_attention(
 ) -> Float[Tensor, " ... sequence_length d_out"]:
     # so... I guess we run attention num_heads times,
     # concatenate the results, and put it through O...
+    print("")
+    print("in-ft shape: ", in_features.shape)
     Q = in_features @ q_proj_weight.T
     K = in_features @ k_proj_weight.T
-    V = in_features @ v_proj_weight.T # other oder?
-
+    V = in_features @ v_proj_weight.T
+    print(f"V shape: {V.shape}")
+    print(f"v_proj_weight shape: {v_proj_weight.shape}")
     # expand or repeat? unqueeze -3? expand before multiplying?
-    qs = Q.unsqueeze(0).expand(num_heads, -1, -1, -1)
-    vs = V.unsqueeze(0).expand(num_heads, -1, -1, -1)
-    ks = K.unsqueeze(0).expand(num_heads, -1, -1, -1)
-    
+    # expand before multiplying is efficient if ugly
+
+    qs = Q.unsqueeze(-3)
+    ks = K.unsqueeze(-3)
+    vs = V.unsqueeze(-3)
+    print(f"vs after unsqueeze: {vs.shape}")
+    ndims = len(qs.shape) # so annoying
+    expand_index = -1 * torch.ones(ndims, dtype=int)
+    expand_index[-3] = num_heads
+    qs = qs.expand(tuple(expand_index.tolist()))
+    ks = ks.expand(tuple(expand_index.tolist()))
+    vs = vs.expand(tuple(expand_index.tolist()))
+    print(f"vs after expand: {vs.shape}")
+
     sdpa = scaled_dot_product_attention(qs, ks, vs)
-    return sdpa @ o_proj_weight.transpose(-2, -1)
+    # [..., num_heads, d_k, d_v]
+
+    # forgot to concatenate... need to get dimensions ordered too
+    # want to concatenate so the last dimension is num_heads * d_v
+    # wait, o_proj_weight is already d_v...
+    # so it should actually be num_heads * d_k...
+    # sdpa_concat = sdpa.flatten(start_dim=-3, end_dim=-2)
+    # [..., num_heads * d_k, d_v]
+
+    # No, the paper says O is [h * d_v, d_model]! ???
+    sdpa = sdpa.permute(0, 2, 1, 3)
+    print(f"After permute: {sdpa.shape}")
+
+    sdpa_concat = sdpa.flatten(start_dim=-2)
+    print(f"After flatten: {sdpa_concat.shape}")
+    print(f"o_proj_weight shape: {o_proj_weight.shape}")
+    print(f"o_proj_weight.transpose(-2, -1) shape: {o_proj_weight.transpose(-2, -1).shape}")
+    return sdpa_concat @ o_proj_weight.transpose(-2, -1)
 
 
 
