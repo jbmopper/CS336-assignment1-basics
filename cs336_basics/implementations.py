@@ -8,7 +8,7 @@ from jaxtyping import Float, Int, Bool
 __all__ =   [ 
                 'linear', 'embeddings', 'SwiGLU', 'rmsnorm', 'softmax', 'silu',
                 'crossentropy', 'scaled_dot_product_attention', 'rope',
-                'multihead_self_attention'
+                'multihead_self_attention', 'multihead_self_attention_with_rope'
             ]
 
 def linear(weights, in_features):
@@ -137,23 +137,80 @@ def multihead_self_attention(
     qs = torch.stack(qs, -3)
     ks = torch.stack(ks, -3)
     vs = torch.stack(vs, -3)
-    # [..., num_heads, seq_len, d_k (or v) / num_heads]
+    # [..., num_heads, seq_len, d_k (or v) // num_heads]
 
     # mas should be seq_len x seq_len
     mask = torch.ones((qs.size(-2), qs.size(-2)), dtype=bool)
     mask = torch.tril(mask)
 
     sdpa = scaled_dot_product_attention(qs, ks, vs, mask)
-    # [..., num_heads, seq_len, d_v / num_heads]
+    # [..., num_heads, seq_len, d_v // num_heads]
     
     sdpa = sdpa.transpose(-3, -2)
-    # [..., seq_len, num_heads, d_v/num_heads]
+    # [..., seq_len, num_heads, d_v // num_heads]
     sdpa_concat = sdpa.flatten(start_dim=-2)
     # [..., seq-lem, d_v]
     # o is [d_model, d_v] so transpose
     return sdpa_concat @ o_proj_weight.T
 
+def multihead_self_attention_with_rope(
+    d_model: int,
+    num_heads: int,
+    max_seq_len: int,
+    theta: float,
+    q_proj_weight: Float[Tensor, " d_k d_in"],
+    k_proj_weight: Float[Tensor, " d_k d_in"],
+    v_proj_weight: Float[Tensor, " d_v d_in"],
+    o_proj_weight: Float[Tensor, " d_model d_v"],
+    in_features: Float[Tensor, " ... sequence_length d_in"],
+    token_positions: Int[Tensor, " ... sequence_length"] | None = None,
+) -> Float[Tensor, " ... sequence_length d_out"]:
+    # This implementation should handle the key, query, and value projections for all heads in a single matrix multiply.
+    # In this case, the RoPE embedding dimension must be the head embedding dimension (d_model // num_heads).
+    # because why not? 
+    # then need to repeat MHSA logic
 
+    print("")
+    print("in-ft shape: ", in_features.shape)
+    Q = in_features @ q_proj_weight.T # [..., seq_len, d_k]
+    K = in_features @ k_proj_weight.T
+    V = in_features @ v_proj_weight.T # [..., seq_len, d_v]
+
+    # need d_model // num_heads 
+    # rope_dim = o_proj_weight.size(-2) // num_heads # could've just used d_model argument...
+    rope_dim = d_model // num_heads
+    qs = Q.split(rope_dim, -1)
+    ks = K.split(rope_dim, -1)
+    # reshape instead? will sizes conform? 
+
+    vs = V.split(V.size(-1)//num_heads, -1)
+
+    qs = torch.stack(qs, -3)
+    ks = torch.stack(ks, -3) 
+    # [..., num_heads, seq_len, d_model / num_heads]
+    print("qs size: ", qs.size())
+    vs = torch.stack(vs, -3)
+
+    # d_k // num_heads?
+    d_k = qs.size(-1)
+
+    qs = rope(d_k, theta, max_seq_len, qs, token_positions)
+    ks = rope(d_k, theta, max_seq_len, ks, token_positions)
+
+    # repeating MHSA 
+    mask = torch.ones((qs.size(-2), qs.size(-2)), dtype=bool)   
+    mask = torch.tril(mask)
+
+    sdpa = scaled_dot_product_attention(qs, ks, vs, mask)
+    # [..., num_heads, seq_len, d_v // num_heads]
+    
+    sdpa = sdpa.transpose(-3, -2)
+    # [..., seq_len, num_heads, d_v // num_heads]
+    sdpa_concat = sdpa.flatten(start_dim=-2)
+    # [..., seq-lem, d_v]
+    # o is [d_model, d_v] so transpose
+    return sdpa_concat @ o_proj_weight.T
+    
 
 
 
