@@ -138,20 +138,19 @@ def multihead_self_attention(
     ks = torch.stack(ks, -3)
     vs = torch.stack(vs, -3)
     # [..., num_heads, seq_len, d_k (or v) / num_heads]
-    print("vs after reshape: ", vs.shape)
 
-    
-    sdpa = scaled_dot_product_attention(qs, ks, vs)
+    # mas should be seq_len x seq_len
+    mask = torch.ones((qs.size(-2), qs.size(-2)), dtype=bool)
+    mask = torch.tril(mask)
+
+    sdpa = scaled_dot_product_attention(qs, ks, vs, mask)
     # [..., num_heads, seq_len, d_v / num_heads]
     
     sdpa = sdpa.transpose(-3, -2)
     # [..., seq_len, num_heads, d_v/num_heads]
-    print(f"After permute: {sdpa.shape}")
     sdpa_concat = sdpa.flatten(start_dim=-2)
     # [..., seq-lem, d_v]
-    print(f"After flatten: {sdpa_concat.shape}")
-    print(f"o_proj_weight shape: {o_proj_weight.shape}")
-    # [d_model, d_v] so transpose
+    # o is [d_model, d_v] so transpose
     return sdpa_concat @ o_proj_weight.T
 
 
