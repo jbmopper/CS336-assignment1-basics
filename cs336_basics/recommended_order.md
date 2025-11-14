@@ -22,7 +22,7 @@
    - Test: `tests/test_model.py::test_rope`
 9. ✅ `run_multihead_self_attention` - Multi-head attention without RoPE
    - Test: `tests/test_model.py::test_multihead_self_attention`
-10. `run_multihead_self_attention_with_rope` - Multi-head attention with RoPE
+10. ✅ `run_multihead_self_attention_with_rope` - Multi-head attention with RoPE
     - Test: `tests/test_model.py::test_multihead_self_attention_with_rope`
 
 ## Tier 3: Full model components

@@ -211,6 +211,31 @@ def multihead_self_attention_with_rope(
     # o is [d_model, d_v] so transpose
     return sdpa_concat @ o_proj_weight.T
     
+def transformer_block(
+    d_model: int,
+    num_heads: int,
+    d_ff: int,
+    max_seq_len: int,
+    theta: float,
+    weights: dict[str, Tensor],
+    in_features: Float[Tensor, " batch sequence_length d_model"],
+) -> Float[Tensor, " batch sequence_length d_model"]:
+    class TransformerBlock(nn.Module):
+        def __init__(self, 
+            d_model,
+            num_heads,
+            d_ff,
+            max_seq_len,
+            theta,
+            weights,
+            in_features
+        ):
+            super().__init__()
+            # ... weights
+            
+            self.rope_mhsa = None
+
+
 
 
 
