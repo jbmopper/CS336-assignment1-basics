@@ -7,7 +7,8 @@ from jaxtyping import Float, Int, Bool
 
 __all__ =   [ 
                 'linear', 'embeddings', 'SwiGLU', 'rmsnorm', 'softmax', 'silu',
-                'crossentropy', 'scaled_dot_product_attention', 'rope'
+                'crossentropy', 'scaled_dot_product_attention', 'rope',
+                'multihead_self_attention'
             ]
 
 def linear(weights, in_features):
@@ -111,6 +112,28 @@ def rope(  d_k: int,
     out = torch.einsum(R, [..., 0, 1, 2], in_query_or_key, [..., 0, 2], [..., 0, 1])
     return out
 
+def multihead_self_attention(
+    # d_model: int, # is this needed?
+    num_heads: int,
+    q_proj_weight: Float[Tensor, " d_k d_in"],
+    k_proj_weight: Float[Tensor, " d_k d_in"],
+    v_proj_weight: Float[Tensor, " d_v d_in"],
+    o_proj_weight: Float[Tensor, " d_model d_v"],
+    in_features: Float[Tensor, " ... sequence_length d_in"],
+) -> Float[Tensor, " ... sequence_length d_out"]:
+    # so... I guess we run attention num_heads times,
+    # concatenate the results, and put it through O...
+    Q = in_features @ q_proj_weight.T
+    K = in_features @ k_proj_weight.T
+    V = in_features @ v_proj_weight.T # other oder?
+
+    # expand or repeat? unqueeze -3? expand before multiplying?
+    qs = Q.unsqueeze(0).expand(num_heads, -1, -1, -1)
+    vs = V.unsqueeze(0).expand(num_heads, -1, -1, -1)
+    ks = K.unsqueeze(0).expand(num_heads, -1, -1, -1)
+    
+    sdpa = scaled_dot_product_attention(qs, ks, vs)
+    return sdpa @ o_proj_weight.transpose(-2, -1)
 
 
 
