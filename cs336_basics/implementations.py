@@ -41,7 +41,8 @@ def rmsnorm(eps, weights, in_features):
     return (in_features/rms) * weights
 
 def softmax(in_features, dim):
-    adjusted_features = in_features - torch.max(in_features)
+    # adjusted_features = in_features - torch.max(in_features) 
+    adjusted_features = in_features - torch.max(in_features, dim=dim, keepdim=True)[0]
     exp_features = torch.exp(adjusted_features)
     return exp_features / torch.sum(exp_features, dim=dim, keepdim=True)
 
@@ -125,46 +126,33 @@ def multihead_self_attention(
     # concatenate the results, and put it through O...
     print("")
     print("in-ft shape: ", in_features.shape)
-    Q = in_features @ q_proj_weight.T
+    Q = in_features @ q_proj_weight.T # [..., seq_len, d_k]
     K = in_features @ k_proj_weight.T
-    V = in_features @ v_proj_weight.T
-    print(f"V shape: {V.shape}")
-    print(f"v_proj_weight shape: {v_proj_weight.shape}")
-    # expand or repeat? unqueeze -3? expand before multiplying?
-    # expand before multiplying is efficient if ugly
+    V = in_features @ v_proj_weight.T # [..., seq_len, d_v]
 
-    qs = Q.unsqueeze(-3)
-    ks = K.unsqueeze(-3)
-    vs = V.unsqueeze(-3)
-    print(f"vs after unsqueeze: {vs.shape}")
-    ndims = len(qs.shape) # so annoying
-    expand_index = -1 * torch.ones(ndims, dtype=int)
-    expand_index[-3] = num_heads
-    qs = qs.expand(tuple(expand_index.tolist()))
-    ks = ks.expand(tuple(expand_index.tolist()))
-    vs = vs.expand(tuple(expand_index.tolist()))
-    print(f"vs after expand: {vs.shape}")
+    qs = Q.split(Q.size(-1)//num_heads, -1)
+    ks = K.split(K.size(-1)//num_heads, -1)
+    vs = V.split(V.size(-1)//num_heads, -1)
 
+    qs = torch.stack(qs, -3)
+    ks = torch.stack(ks, -3)
+    vs = torch.stack(vs, -3)
+    # [..., num_heads, seq_len, d_k (or v) / num_heads]
+    print("vs after reshape: ", vs.shape)
+
+    
     sdpa = scaled_dot_product_attention(qs, ks, vs)
-    # [..., num_heads, d_k, d_v]
-
-    # forgot to concatenate... need to get dimensions ordered too
-    # want to concatenate so the last dimension is num_heads * d_v
-    # wait, o_proj_weight is already d_v...
-    # so it should actually be num_heads * d_k...
-    # sdpa_concat = sdpa.flatten(start_dim=-3, end_dim=-2)
-    # [..., num_heads * d_k, d_v]
-
-    # No, the paper says O is [h * d_v, d_model]! ???
-    sdpa = sdpa.permute(0, 2, 1, 3)
+    # [..., num_heads, seq_len, d_v / num_heads]
+    
+    sdpa = sdpa.transpose(-3, -2)
+    # [..., seq_len, num_heads, d_v/num_heads]
     print(f"After permute: {sdpa.shape}")
-
     sdpa_concat = sdpa.flatten(start_dim=-2)
+    # [..., seq-lem, d_v]
     print(f"After flatten: {sdpa_concat.shape}")
     print(f"o_proj_weight shape: {o_proj_weight.shape}")
-    print(f"o_proj_weight.transpose(-2, -1) shape: {o_proj_weight.transpose(-2, -1).shape}")
-    return sdpa_concat @ o_proj_weight.transpose(-2, -1)
-
+    # [d_model, d_v] so transpose
+    return sdpa_concat @ o_proj_weight.T
 
 
 
