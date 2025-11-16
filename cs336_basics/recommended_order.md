@@ -26,7 +26,7 @@
     - Test: `tests/test_model.py::test_multihead_self_attention_with_rope`
 
 ## Tier 3: Full model components
-11. `run_transformer_block` - Complete transformer block (uses everything above)
+11. ✅ `run_transformer_block` - Complete transformer block (uses everything above)
     - Test: `tests/test_model.py::test_transformer_block`
 12. `run_transformer_lm` - Full transformer language model
     - Test: `tests/test_model.py::test_transformer_lm`

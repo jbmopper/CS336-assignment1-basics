@@ -11,6 +11,7 @@ from torch import Tensor
 
 from cs336_basics.implementations import *
 from cs336_basics.implementations import crossentropy
+from cs336_basics.implementations import transformer_block
 
 def run_linear(
     d_in: int,
@@ -305,7 +306,12 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    tb = transformer_block(d_model,
+        num_heads,
+        d_ff,
+        max_seq_len,
+        theta)
+    return tb.forward(weights, in_features)
 
 
 def run_transformer_lm(

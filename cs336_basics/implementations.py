@@ -1,4 +1,5 @@
 import torch
+from torch.cpu import stream
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
@@ -210,8 +211,10 @@ def multihead_self_attention_with_rope(
     # [..., seq-lem, d_v]
     # o is [d_model, d_v] so transpose
     return sdpa_concat @ o_proj_weight.T
-    
-def transformer_block(
+
+
+class transformer_block(nn.Module):
+    """
     d_model: int,
     num_heads: int,
     d_ff: int,
@@ -219,21 +222,86 @@ def transformer_block(
     theta: float,
     weights: dict[str, Tensor],
     in_features: Float[Tensor, " batch sequence_length d_model"],
-) -> Float[Tensor, " batch sequence_length d_model"]:
-    class TransformerBlock(nn.Module):
-        def __init__(self, 
-            d_model,
-            num_heads,
-            d_ff,
-            max_seq_len,
-            theta,
-            weights,
-            in_features
-        ):
-            super().__init__()
-            # ... weights
-            
-            self.rope_mhsa = None
+    ): -> Float[Tensor, " batch sequence_length d_model"]
+    ---
+    weights (dict[str, Tensor]):
+            State dict of our reference implementation.
+            The keys of this dictionary are:
+            - `attn.q_proj.weight`
+                The query projections for all `num_heads` attention heads.
+                Shape is (d_model, d_model).
+                The rows are ordered by matrices of shape (num_heads, d_k),
+                so `attn.q_proj.weight == torch.cat([q_heads.0.weight, ..., q_heads.N.weight], dim=0)`.
+            - `attn.k_proj.weight`
+                The key projections for all `num_heads` attention heads.
+                Shape is (d_model, d_model).
+                The rows are ordered by matrices of shape (num_heads, d_k),
+                so `attn.k_proj.weight == torch.cat([k_heads.0.weight, ..., k_heads.N.weight], dim=0)`.
+            - `attn.v_proj.weight`
+                The value projections for all `num_heads` attention heads.
+                Shape is (d_model, d_model).
+                The rows are ordered by matrices of shape (num_heads, d_v),
+                so `attn.v_proj.weight == torch.cat([v_heads.0.weight, ..., v_heads.N.weight], dim=0)`.
+            - `attn.output_proj.weight`
+                Weight of the multi-head self-attention output projection
+                Shape is (d_model, d_model).
+            - `ln1.weight`
+                Weights of affine transform for the first RMSNorm
+                applied in the transformer block.
+                Shape is (d_model,).
+            - `ffn.w1.weight`
+                Weight of the first linear transformation in the FFN.
+                Shape is (d_model, d_ff).
+            - `ffn.w2.weight`
+                Weight of the second linear transformation in the FFN.
+                Shape is (d_ff, d_model).
+            - `ffn.w3.weight`
+                Weight of the third linear transformation in the FFN.
+                Shape is (d_model, d_ff).
+            - `ln2.weight`
+                Weights of affine transform for the second RMSNorm
+                applied in the transformer block.
+                Shape is (d_model,).
+    """
+    def __init__(self, 
+        d_model,
+        num_heads,
+        d_ff,
+        max_seq_len,
+        theta
+    ) -> None:
+        super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.max_seq_len = max_seq_len
+        self.theta = theta
+        self.eps = 1e-5 # from testing/common practice
+
+    def forward(self, weights, in_features):
+        norm1 = rmsnorm(self.eps, weights["ln1.weight"], in_features)
+        token_positions = torch.arange(in_features.size(-2), dtype=int) # 0...sequence_length
+        attention_output = multihead_self_attention_with_rope(
+            self.d_model,
+            self.num_heads,
+            self.max_seq_len,
+            self.theta,
+            weights["attn.q_proj.weight"],
+            weights["attn.k_proj.weight"],
+            weights["attn.v_proj.weight"],
+            weights["attn.output_proj.weight"],
+            norm1,
+            token_positions
+        )
+        in_features = in_features + attention_output
+        norm2 = rmsnorm(self.eps, weights["ln2.weight"], in_features)
+        swiglu = SwiGLU(self.d_model, self.d_ff)
+        swiglu.w1.weight.data = weights["ffn.w1.weight"]
+        swiglu.w2.weight.data = weights["ffn.w2.weight"]
+        swiglu.w3.weight.data = weights["ffn.w3.weight"]
+
+        ffn_output = swiglu.forward(norm2)
+        return in_features + ffn_output
 
 
 
