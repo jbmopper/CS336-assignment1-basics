@@ -9,7 +9,8 @@ from jaxtyping import Float, Int, Bool
 __all__ =   [ 
                 'linear', 'embeddings', 'SwiGLU', 'rmsnorm', 'softmax', 'silu',
                 'crossentropy', 'scaled_dot_product_attention', 'rope',
-                'multihead_self_attention', 'multihead_self_attention_with_rope'
+                'multihead_self_attention', 'multihead_self_attention_with_rope',
+                'transformer_block', 'transformer_lm'
             ]
 
 def linear(weights, in_features):
@@ -214,55 +215,6 @@ def multihead_self_attention_with_rope(
 
 
 class transformer_block(nn.Module):
-    """
-    d_model: int,
-    num_heads: int,
-    d_ff: int,
-    max_seq_len: int,
-    theta: float,
-    weights: dict[str, Tensor],
-    in_features: Float[Tensor, " batch sequence_length d_model"],
-    ): -> Float[Tensor, " batch sequence_length d_model"]
-    ---
-    weights (dict[str, Tensor]):
-            State dict of our reference implementation.
-            The keys of this dictionary are:
-            - `attn.q_proj.weight`
-                The query projections for all `num_heads` attention heads.
-                Shape is (d_model, d_model).
-                The rows are ordered by matrices of shape (num_heads, d_k),
-                so `attn.q_proj.weight == torch.cat([q_heads.0.weight, ..., q_heads.N.weight], dim=0)`.
-            - `attn.k_proj.weight`
-                The key projections for all `num_heads` attention heads.
-                Shape is (d_model, d_model).
-                The rows are ordered by matrices of shape (num_heads, d_k),
-                so `attn.k_proj.weight == torch.cat([k_heads.0.weight, ..., k_heads.N.weight], dim=0)`.
-            - `attn.v_proj.weight`
-                The value projections for all `num_heads` attention heads.
-                Shape is (d_model, d_model).
-                The rows are ordered by matrices of shape (num_heads, d_v),
-                so `attn.v_proj.weight == torch.cat([v_heads.0.weight, ..., v_heads.N.weight], dim=0)`.
-            - `attn.output_proj.weight`
-                Weight of the multi-head self-attention output projection
-                Shape is (d_model, d_model).
-            - `ln1.weight`
-                Weights of affine transform for the first RMSNorm
-                applied in the transformer block.
-                Shape is (d_model,).
-            - `ffn.w1.weight`
-                Weight of the first linear transformation in the FFN.
-                Shape is (d_model, d_ff).
-            - `ffn.w2.weight`
-                Weight of the second linear transformation in the FFN.
-                Shape is (d_ff, d_model).
-            - `ffn.w3.weight`
-                Weight of the third linear transformation in the FFN.
-                Shape is (d_model, d_ff).
-            - `ln2.weight`
-                Weights of affine transform for the second RMSNorm
-                applied in the transformer block.
-                Shape is (d_model,).
-    """
     def __init__(self, 
         d_model,
         num_heads,
@@ -303,8 +255,43 @@ class transformer_block(nn.Module):
         ffn_output = swiglu.forward(norm2)
         return in_features + ffn_output
 
+class transformer_lm(nn.Module):
+    def __init__(self, 
+        vocab_size,# make argumnent to forward? needed?
+        d_model,
+        num_heads,
+        num_layers,
+        d_ff,
+        context_length, # assuming samw 
+        rope_theta,
+    ) -> None:
+        super().__init__()
+        self.vocab_size = vocab_size # make argumnent to forward? needed?
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        self.d_ff = d_ff
+        self.max_seq_len = context_length # assuming samw 
+        self.theta = rope_theta
+        self.transformers = nn.ModuleList([
+            transformer_block(d_model, num_heads, d_ff, context_length, rope_theta)
+            for i in range(num_layers)
+        ])
+        self.eps = 1e-5 # from testing/common practice
 
+    def forward(self, weights, in_indices):
+        x = embeddings(weights["token_embeddings.weight"], in_indices)
+        for i, l in enumerate(self.transformers): # so it goes
+            weight_prefix = f"layers.{i}."
+            weights = {
+                k.replace(weight_prefix, ""): v
+                for k, v in weights.items()
+                if k.startswith(weight_prefix) # 
+            }
+            x = l.forward(l.self, weights, x)
+            
+        x = rmsnorm(self.eps, weights["ln_final.weight"], x) 
+        # [... d_model]
+        return x @ weights["m_head.weight"].T # [... vocab_size]
 
-
-
-
+        

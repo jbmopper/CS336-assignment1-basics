@@ -10,8 +10,6 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 from cs336_basics.implementations import *
-from cs336_basics.implementations import crossentropy
-from cs336_basics.implementations import transformer_block
 
 def run_linear(
     d_in: int,
@@ -393,7 +391,18 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    # raise NotImplementedError
+    tl = transformer_lm(
+        vocab_size,# make argumnent to forward? needed?
+        d_model,
+        num_heads,
+        num_layers,
+        d_ff,
+        context_length, # assuming samw 
+        rope_theta
+    )
+
+    return tl.forward(weights, in_indices)
 
 
 def run_rmsnorm(
