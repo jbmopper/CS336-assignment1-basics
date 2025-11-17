@@ -1,16 +1,15 @@
 import torch
-from torch.cpu import stream
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 from jaxtyping import Float, Int, Bool
+import numpy.typing as npt
 
 
 __all__ =   [ 
                 'linear', 'embeddings', 'SwiGLU', 'rmsnorm', 'softmax', 'silu',
                 'crossentropy', 'scaled_dot_product_attention', 'rope',
                 'multihead_self_attention', 'multihead_self_attention_with_rope',
-                'transformer_block', 'transformer_lm'
+                'transformer_block', 'transformer_lm', 'get_batch'
             ]
 
 def linear(weights, in_features):
@@ -289,4 +288,13 @@ class transformer_lm(nn.Module):
         # [... d_model]
         return x @ weights["lm_head.weight"].T # [... vocab_size]
 
-        
+def get_batch(dataset: npt.NDArray, batch_size: int, context_length: int, device: str
+) -> tuple[torch.Tensor, torch.Tensor]:
+
+    starts = torch.randint(low=0, high=(len(dataset) - context_length), size=(batch_size,))
+    indices = starts.unsqueeze(1) + torch.arange(context_length) # [batch_size, context_length]
+
+    inputs = torch.tensor(dataset[indices.numpy()], dtype=torch.long, device=device)
+    labels = torch.tensor(dataset[indices.numpy() +1], dtype=torch.long, device=device)
+    # need the whole sequence; randint "high=" is exclusive so +1 is OK
+    return (inputs, labels)
