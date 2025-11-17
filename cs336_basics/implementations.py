@@ -126,8 +126,6 @@ def multihead_self_attention(
 ) -> Float[Tensor, " ... sequence_length d_out"]:
     # so... I guess we run attention num_heads times,
     # concatenate the results, and put it through O...
-    print("")
-    print("in-ft shape: ", in_features.shape)
     Q = in_features @ q_proj_weight.T # [..., seq_len, d_k]
     K = in_features @ k_proj_weight.T
     V = in_features @ v_proj_weight.T # [..., seq_len, d_v]
@@ -172,8 +170,6 @@ def multihead_self_attention_with_rope(
     # because why not? 
     # then need to repeat MHSA logic
 
-    print("")
-    print("in-ft shape: ", in_features.shape)
     Q = in_features @ q_proj_weight.T # [..., seq_len, d_k]
     K = in_features @ k_proj_weight.T
     V = in_features @ v_proj_weight.T # [..., seq_len, d_v]
@@ -190,7 +186,6 @@ def multihead_self_attention_with_rope(
     qs = torch.stack(qs, -3)
     ks = torch.stack(ks, -3) 
     # [..., num_heads, seq_len, d_model / num_heads]
-    print("qs size: ", qs.size())
     vs = torch.stack(vs, -3)
 
     # d_k // num_heads?
@@ -283,15 +278,15 @@ class transformer_lm(nn.Module):
         x = embeddings(weights["token_embeddings.weight"], in_indices)
         for i, l in enumerate(self.transformers): # so it goes
             weight_prefix = f"layers.{i}."
-            weights = {
+            layer_weights = {
                 k.replace(weight_prefix, ""): v
                 for k, v in weights.items()
                 if k.startswith(weight_prefix) # 
             }
-            x = l.forward(l.self, weights, x)
+            x = l.forward(layer_weights, x)
             
         x = rmsnorm(self.eps, weights["ln_final.weight"], x) 
         # [... d_model]
-        return x @ weights["m_head.weight"].T # [... vocab_size]
+        return x @ weights["lm_head.weight"].T # [... vocab_size]
 
         

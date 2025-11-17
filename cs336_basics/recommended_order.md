@@ -28,7 +28,7 @@
 ## Tier 3: Full model components
 11. ✅ `run_transformer_block` - Complete transformer block (uses everything above)
     - Test: `tests/test_model.py::test_transformer_block`
-12. `run_transformer_lm` - Full transformer language model
+12. ✅ `run_transformer_lm` - Full transformer language model
     - Test: `tests/test_model.py::test_transformer_lm`
     - Test: `tests/test_model.py::test_transformer_lm_truncated_input`
 
