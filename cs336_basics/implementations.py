@@ -3,13 +3,15 @@ import torch.nn as nn
 from torch import Tensor
 from jaxtyping import Float, Int, Bool
 import numpy.typing as npt
+from collections.abc import Iterable
 
 
 __all__ =   [ 
                 'linear', 'embeddings', 'SwiGLU', 'rmsnorm', 'softmax', 'silu',
                 'crossentropy', 'scaled_dot_product_attention', 'rope',
                 'multihead_self_attention', 'multihead_self_attention_with_rope',
-                'transformer_block', 'transformer_lm', 'get_batch'
+                'transformer_block', 'transformer_lm', 'get_batch',
+                'gradient_clipping'
             ]
 
 def linear(weights, in_features):
@@ -298,3 +300,22 @@ def get_batch(dataset: npt.NDArray, batch_size: int, context_length: int, device
     labels = torch.tensor(dataset[indices.numpy() +1], dtype=torch.long, device=device)
     # need the whole sequence; randint "high=" is exclusive so +1 is OK
     return (inputs, labels)
+
+def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
+    gradient = torch.cat([
+        torch.flatten(x.grad) 
+        for x in parameters
+        if x.grad is not None
+    ])
+    # this could be made more efficient by sqrt-ing sum({list comprehension that squares not None params})
+    # also doing param.grad.mul_() which is more "in place", and precompute the clip coefficient
+
+    if (norm:= torch.linalg.norm(gradient)) > max_l2_norm:
+        # map(lambda x: x.grad -> x.grad/(norm/max_l2_norm), parameters )
+        for param in parameters:
+            if param.grad is not None:
+                param.grad = param.grad / (norm/max_l2_norm)
+
+    return None 
+
+

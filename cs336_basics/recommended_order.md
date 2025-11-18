@@ -35,9 +35,9 @@
 ## Tier 4: Training utilities (can do in any order)
 13. ✅ `run_cross_entropy` - Cross-entropy loss function
     - Test: `tests/test_nn_utils.py::test_cross_entropy`
-14. `run_get_batch` - Data loading/sampling
+14. ✅ `run_get_batch` - Data loading/sampling
     - Test: `tests/test_data.py::test_get_batch`
-15. `run_gradient_clipping` - Gradient clipping for training stability
+15. ✅ `run_gradient_clipping` - Gradient clipping for training stability
     - Test: `tests/test_nn_utils.py::test_gradient_clipping`
 16. `get_adamw_cls` - AdamW optimizer
     - Test: `tests/test_optimizer.py::test_adamw`
