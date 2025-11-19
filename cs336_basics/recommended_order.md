@@ -39,7 +39,7 @@
     - Test: `tests/test_data.py::test_get_batch`
 15. ✅ `run_gradient_clipping` - Gradient clipping for training stability
     - Test: `tests/test_nn_utils.py::test_gradient_clipping`
-16. `get_adamw_cls` - AdamW optimizer
+16. ✅ `get_adamw_cls` - AdamW optimizer
     - Test: `tests/test_optimizer.py::test_adamw`
 17. `run_get_lr_cosine_schedule` - Cosine learning rate schedule with warmup
     - Test: `tests/test_optimizer.py::test_get_lr_cosine_schedule`
