@@ -318,4 +318,23 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: flo
 
     return None 
 
+class MyAdamW(torch.optim.Optimizer):
+    def __init__(self,
+    params,
+    lr=0.001,
+    betas=(0.9, .999),
+    eps=1e-08,
+    weight_decay=0.01
+    ) -> None:
+        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+        super().__init__(params, defaults)
+
+    
+    def step(self):
+        for group in self.param_groups:
+            lr = group['lr'] # for example
+            for param in group['params']:
+                if param.grad is not None:
+                    param = - lr * param.grad # for example
+
 
