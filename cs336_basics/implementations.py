@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
-from torch import Tensor
+from torch import Tensor, pi
 from jaxtyping import Float, Int, Bool
 import numpy.typing as npt
 from collections.abc import Iterable
+import math
 
 
 __all__ =   [ 
@@ -11,7 +12,7 @@ __all__ =   [
                 'crossentropy', 'scaled_dot_product_attention', 'rope',
                 'multihead_self_attention', 'multihead_self_attention_with_rope',
                 'transformer_block', 'transformer_lm', 'get_batch',
-                'gradient_clipping'
+                'gradient_clipping', 'get_lr_cosine_schedule'
             ]
 
 def linear(weights, in_features):
@@ -338,3 +339,33 @@ class MyAdamW(torch.optim.Optimizer):
                     param = - lr * param.grad # for example
 
 
+
+
+def get_lr_cosine_schedule(    it: int,
+    max_learning_rate: float,
+    min_learning_rate: float,
+    warmup_iters: int,
+    cosine_cycle_iters: int,
+):
+    if it < warmup_iters:
+        # rise over run ... warmup from 0?
+        lr = (max_learning_rate / warmup_iters) * it
+        
+    elif (warmup_iters <= it <= cosine_cycle_iters):
+        # recursive approximation from torch.optim.lr_scheduler.CosineAnnealingLR.html
+        # eta_next = (min_learning_rate + 
+        #     (eta_now - min_learning_rate) * 
+        #     ((1 + torch.cos( ((it+1) * pi) / cosine_cycle_iters ) ) / 
+        #     (1 + torch.cos((it * pi) / cosine_cycle_iters ))) 
+        # )
+        # should use the closed form... from the assignment!
+        cos_it = it - warmup_iters
+        cos_tot_it = cosine_cycle_iters - warmup_iters
+        lr = ( min_learning_rate   
+            + 0.5 * (max_learning_rate - min_learning_rate) 
+            * (1 + math.cos((cos_it * pi) / (cos_tot_it))))
+    
+    else:
+        lr = min_learning_rate
+    
+    return lr
