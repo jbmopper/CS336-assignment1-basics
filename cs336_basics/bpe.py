@@ -1,7 +1,11 @@
 import os
-from typing import BinaryIO
+from typing import Any, BinaryIO
 import multiprocessing
 import regex as re
+from collections import Counter
+
+from torch import mul
+
 
 
 def train_bpe(input_path: str | os.PathLike,
@@ -9,26 +13,46 @@ def train_bpe(input_path: str | os.PathLike,
     special_tokens: list[str],
     **kwargs,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-    # 
-    # from pretokenization_example.py
-    ## Usage (for find_chunk_boundaries)
 
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    manager = multiprocessing.Manager()
-    out = manager.dict(??)
-    with open(..., "rb") as f:
-        num_processes = 4
-        boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
+    current_vocab = 256 + len(special_tokens) # just "<|endoftext|>"
+    vocab = {i: bytes([i]) for i in range(256)} # also need special tokens?
+    vocab[256] = b"<|endoftext|>"
+    merges: list[tuple[bytes, bytes]] = [] # merges.append((b"urg", b"bla"))
+    pretokens = Counter()
+    paircount: Counter[tuple[bytes, bytes]] = Counter()
 
-        # The following is a serial implementation, but you can parallelize this
-        # by sending each start/end pair to a set of processes.
-        for start, end in zip(boundaries[:-1], boundaries[1:]):
-            f.seek(start)
-            chunk = f.read(end - start).decode("utf-8", errors="ignore")
-            # Run pre-tokenization on your chunk and store the counts for each pre-token
-            pretokenized = re.finditer(PAT, chunk)
-            for pretoken in pretokenized:
-                tokens = list(pretoken.encode("utf-8"))
+    with open(input_path, "rb") as f:
+        num_processes =  8
+        # boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
+        boundaries = find_chunk_boundaries(f, 8, b"<|endoftext|>")
+        chunks = zip(boundaries[:-1], boundaries[1:])
+        if __name__ == "__main__":
+            with multiprocessing.Pool(...) as pool:
+                chunked_counters = pool.map(lambda x: pretokenize(f, x, PAT), chunks)
+        
+    for cc in chunked_counters:
+        pretokens.update(cc)
+        
+    pretokens.elements 
+        
+    
+
+
+def pretokenize(
+    file: BinaryIO,
+    boundaries, # (int, int)
+    pretokenizer: str
+) -> Counter:
+    pretoken_counts = Counter()
+    file.seek(boundaries[0])
+    chunk = file.read(boundaries[1] - boundaries[0]).decode("utf-8", errors="ignore")
+    pretokens = re.finditer(pretokenizer, chunk)
+    for pretoken in pretokens:
+        pretoken_counts[pretoken.group(0)] += 1
+    return pretoken_counts
+
+
 
 
 
