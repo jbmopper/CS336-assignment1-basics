@@ -15,9 +15,11 @@ def train_bpe(input_path: str | os.PathLike,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
 
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    current_vocab = 256 + len(special_tokens) # just "<|endoftext|>"
+
     vocab = {i: bytes([i]) for i in range(256)} # also need special tokens?
-    vocab[256] = b"<|endoftext|>"
+    for special_token in special_tokens:
+        vocab[len(vocab)] = special_token.encode("utf-8")
+
     merges: list[tuple[bytes, bytes]] = [] # merges.append((b"urg", b"bla"))
     pretokens = Counter()
     paircount: Counter[tuple[bytes, bytes]] = Counter()
@@ -33,8 +35,33 @@ def train_bpe(input_path: str | os.PathLike,
         
     for cc in chunked_counters:
         pretokens.update(cc)
+    
+    del pretokens['<|']
+    del pretokens['|>']
+    del pretokens['endoftext']
         
-    pretokens.elements 
+    # first pass    
+    for pretoken, count in pretokens.items():
+        b = pretoken.encode("utf-8")
+        if len(b) < 2:
+            continue 
+        for i in range(len(b)-1): 
+            paircount[(b[i], b[i+1])] += 1 * count 
+
+    merge = max(paircount.items(), key=lambda kv: (kv[1], kv[0]))[0] # bot says this does it all...
+    merges.append(merge)
+    vocab[len(vocab)] = bytes(merge)
+
+    while len(vocab) < vocab_size:
+        update = next(reversed(vocab.values()))
+        for pretoken, count in pretokens.items():
+            splits = pretoken.encode("utf-8").split(update)
+            # splits will be a list.  1 element means no split
+            # "b''" elements indicate beginning/end/multiple-in-a-row
+            
+
+
+
         
     
 
