@@ -21,7 +21,7 @@ def train_bpe(input_path: str | os.PathLike,
         vocab[len(vocab)] = special_token.encode("utf-8")
 
     merges: list[tuple[bytes, bytes]] = [] # merges.append((b"urg", b"bla"))
-    pretokens = Counter()
+    pretoken_counts = Counter()
     paircount: Counter[tuple[bytes, bytes]] = Counter()
 
     with open(input_path, "rb") as f:
@@ -34,20 +34,26 @@ def train_bpe(input_path: str | os.PathLike,
                 chunked_counters = pool.map(lambda x: pretokenize(f, x, PAT), chunks)
         
     for cc in chunked_counters:
-        pretokens.update(cc)
+        pretoken_counts.update(cc)
     
-    del pretokens['<|']
-    del pretokens['|>']
-    del pretokens['endoftext']
+    del pretoken_counts['<|']
+    del pretoken_counts['|>']
+    del pretoken_counts['endoftext']
         
+    tokenized = { # need to actually merge bytes
+        pretoken: [bytes([b]) for b in pretoken.encode("utf-8")]
+        for pretoken in pretoken_counts.keys()
+    }
+
     # first pass    
-    for pretoken, count in pretokens.items():
-        b = pretoken.encode("utf-8")
+    for pretoken, b in tokenized.items():
         if len(b) < 2:
             continue 
         for i in range(len(b)-1): 
-            paircount[(b[i], b[i+1])] += 1 * count 
+            paircount[(b[i], b[i+1])] += 1 * pretoken_counts[pretoken]
 
+    
+    
     merge = max(paircount.items(), key=lambda kv: (kv[1], kv[0]))[0] # bot says this does it all...
     merges.append(merge)
     vocab[len(vocab)] = bytes(merge)
@@ -56,15 +62,21 @@ def train_bpe(input_path: str | os.PathLike,
         update = next(reversed(vocab.values()))
         for pretoken, count in pretokens.items():
             splits = pretoken.encode("utf-8").split(update)
-            # splits will be a list.  1 element means no split
+            # splits will be a list.  1 element means no split (or all the token)
             # "b''" elements indicate beginning/end/multiple-in-a-row
+            if len(splits) == 1:
+                continue
+            elif splits[0] == b'':
+                match = check_vocab(vocab, splits[1], "l")
+                # update counts
+            elif splits[-1] == b'':
+                # uhh need to check further into the sequence in case there's multiple b''...
+                # no, that's just "update update"
+                
+            for i in len(splits):
+
+
             
-
-
-
-        
-    
-
 
 def pretokenize(
     file: BinaryIO,
@@ -78,6 +90,34 @@ def pretokenize(
     for pretoken in pretokens:
         pretoken_counts[pretoken.group(0)] += 1
     return pretoken_counts
+
+
+    
+
+
+        
+def check_vocab(vocab: dict[int, bytes], split: bytes, side) -> bytes:
+    if side is "l": # tries to match left side of the adjacent bytes
+        substring = split
+        tester = (substring in vocab.values())
+        while tester is False:
+            substring = substring[:-1]
+            tester = (substring in vocab.values())
+        return substring
+    elif side is "r": # tries to match the right side of the adjacent bytes
+        substring = split
+        tester = (substring in vocab.values())
+        while tester is False:
+            substring = substring[1:]
+            tester = (substring in vocab.values())
+        return substring
+    else:
+        return b""
+
+
+
+
+
 
 
 
