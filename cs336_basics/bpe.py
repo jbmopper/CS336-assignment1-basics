@@ -6,6 +6,7 @@ from collections import Counter
 
 from torch import mul
 
+# __all__ =   ['train_bpe', 'tokenizer']
 __all__ =   ['train_bpe']
 
 def train_bpe(input_path: str | os.PathLike,
@@ -66,7 +67,7 @@ def train_bpe(input_path: str | os.PathLike,
         merge = max(paircount.items(), key=lambda kv: (kv[1], kv[0]))[0] # bot says this does it all...
         merges.append(merge)
         vocab[len(vocab)] = merge[0] + merge[1]
-        update_tokens(merge, tokenized, paircount, pretoken_counts)
+        update_tokens_v2(merge, tokenized, paircount, pretoken_counts)
 
     return vocab, merges
 
@@ -140,6 +141,68 @@ def update_tokens( # updates token lists and pair counts
     return None
 
 
+def update_tokens_v2( # updates token lists and pair counts
+    merge: tuple[bytes, bytes],
+    tokenized: dict[str, list[bytes]],
+    paircount: Counter,
+    pretoken_counts: Counter
+) -> None:
+    merged = merge[0] + merge[1]
+    paircount[merge] = 0
+    for pretoken, b in tokenized.items():
+        count = pretoken_counts[pretoken] 
+        
+        # scan the pretoken and identify merges
+        merge_idx = []
+        updated_tokens = []
+        i = 0
+        while i < len(b):
+            if i < len(b) - 1 and b[i] == merge[0] and b[i+1] == merge[1]:
+                updated_tokens.append(merged)
+                merge_idx.append(i)
+                merge_idx.append(i+1)
+                i += 2
+            else:
+                updated_tokens.append(b[i])
+                i += 1
+
+        # if b = [A, B, A, B], merging (A, B) → AB, results in [AB, AB]
+
+        merge_starts = []
+        merge_ends = []
+        internal_merges = []
+        
+        for i in range(len(merge_idx)):
+            if merge_idx[i] - 1 not in merge_idx:
+                merge_starts.append(merge_idx[i])
+            elif merge_idx[i] + 1 not in merge_idx:
+                merge_ends.append(merge_idx[i])
+            else:
+                internal_merges.append(merge_idx[i])
+                
+
+
+        for i in merge_starts:
+            if i > 0: # deal with left edge
+                paircount[(b[i-1], b[i])] -= count
+                paircount[(b[i-1], merged)] += count
+
+        for i in merge_ends:
+            if i < len(b) - 1: 
+                paircount[(b[i], b[i+1])] -= count
+                paircount[(merged, b[i+1])] += count
+
+        # for i in internal_merges:
+        paircount[(merge[1], merge[0])] -= count * (len(internal_merges)//2)
+        paircount[(merged, merged)] += count * (len(internal_merges)//2)
+        
+
+
+        tokenized[pretoken] = updated_tokens
+
+    # remove the merged pair from paircount
+    del(paircount[merge])
+    return None
 
 
 
@@ -189,3 +252,13 @@ def find_chunk_boundaries(
 
     # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
     return sorted(set(chunk_boundaries))
+
+
+ 
+    # for get_tokenizer from adapters.py
+#  def tokenizer(
+#     vocab: dict[int, bytes],
+#     merges: list[tuple[bytes, bytes]],
+#     special_tokens: list[str] | None = None,
+# ) -> Any:
+# 
