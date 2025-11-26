@@ -49,7 +49,7 @@
     - Test: `tests/test_serialization.py::test_checkpointing`
 19. `get_tokenizer` - Create BPE tokenizer from vocab/merges
     - Tests: `tests/test_tokenizer.py::test_*` (many tests)
-20. `run_train_bpe` - Train a BPE tokenizer
+20. ✅ `run_train_bpe` - Train a BPE tokenizer
     - Test: `tests/test_train_bpe.py::test_train_bpe`
     - Test: `tests/test_train_bpe.py::test_train_bpe_special_tokens`
     - Test: `tests/test_train_bpe.py::test_train_bpe_speed`

@@ -6,7 +6,7 @@ from collections import Counter
 
 from torch import mul
 
-
+__all__ =   ['train_bpe']
 
 def train_bpe(input_path: str | os.PathLike,
     vocab_size: int,
@@ -14,88 +14,126 @@ def train_bpe(input_path: str | os.PathLike,
     **kwargs,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
 
-    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    PAT = build_pretokenizer(special_tokens)
+
+    # PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
     vocab = {i: bytes([i]) for i in range(256)} # also need special tokens?
     for special_token in special_tokens:
         vocab[len(vocab)] = special_token.encode("utf-8")
 
     merges: list[tuple[bytes, bytes]] = [] # merges.append((b"urg", b"bla"))
-    pretoken_counts = Counter()
+    pretoken_counts: Counter[str] = Counter()
     paircount: Counter[tuple[bytes, bytes]] = Counter()
 
     with open(input_path, "rb") as f:
-        num_processes =  8
-        # boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
-        boundaries = find_chunk_boundaries(f, 8, b"<|endoftext|>")
-        chunks = zip(boundaries[:-1], boundaries[1:])
-        if __name__ == "__main__":
-            with multiprocessing.Pool(...) as pool:
-                chunked_counters = pool.map(lambda x: pretokenize(f, x, PAT), chunks)
+        boundaries = find_chunk_boundaries(f, 8, b"<|endoftext|>") # not special token agnostic...
+
+    chunks = zip(boundaries[:-1], boundaries[1:])
+    with multiprocessing.Pool(processes=8) as pool:
+        chunked_counters = pool.map(
+            _worker, [(input_path, s, e, special_tokens, PAT) for s, e in chunks]
+            )
         
-    for cc in chunked_counters:
-        pretoken_counts.update(cc)
-    
-    del pretoken_counts['<|']
-    del pretoken_counts['|>']
-    del pretoken_counts['endoftext']
+        for cc in chunked_counters:
+            pretoken_counts.update(cc)
+        
+        # if __name__ == "__main__":
+        #    with multiprocessing.Pool(...) as pool:
+        #        chunked_counters = pool.map(lambda x: pretokenize(f, x, PAT), chunks)
+
+        
+    # del pretoken_counts['<|']
+    # del pretoken_counts['|>']
+    # del pretoken_counts['endoftext']
         
     tokenized = { # need to actually merge bytes
         pretoken: [bytes([b]) for b in pretoken.encode("utf-8")]
         for pretoken in pretoken_counts.keys()
     }
 
+    # for special_token in special_tokens:
+    #     tokenized[special_token] = [special_token.encode("utf-8")]
+    #     pretoken_counts[special_token] = 0 # 
+
     # first pass    
     for pretoken, b in tokenized.items():
         for i in range(len(b)-1): # skips len 1 b's
             paircount[(b[i], b[i+1])] += 1 * pretoken_counts[pretoken]
 
-
     while len(vocab) < vocab_size:
         # need the byte gumming here
         merge = max(paircount.items(), key=lambda kv: (kv[1], kv[0]))[0] # bot says this does it all...
         merges.append(merge)
-        vocab[len(vocab)] = bytes(merge) # combines into one bytes object
-        update_tokens(merge, tokenized)
+        vocab[len(vocab)] = merge[0] + merge[1]
+        update_tokens(merge, tokenized, paircount, pretoken_counts)
 
     return vocab, merges
 
 
+def build_pretokenizer(special_tokens: list[str]) -> str: # wrong approach, RTFA
+    # Escape regex special characters in tokens
+    # escaped = [re.escape(token) for token in special_tokens]
+    # special_pattern = "|".join(escaped)
+    # # PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""" 
+    base_pat = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    
+    # if special_pattern:
+    #     return f"{special_pattern}|{base_pat}"
+    return base_pat
+
+def _worker(args):
+    path, start, end, special_tokens, PAT = args
+    with open(path, "rb") as f:
+        f.seek(start)
+        chunk = f.read(end - start).decode("utf-8", errors="ignore")
+        return pretokenize(chunk, special_tokens, PAT)
+
 
 def pretokenize(
-    file: BinaryIO,
-    boundaries, # (int, int)
+    chunk: str,
+    special_tokens: list[str],
     pretokenizer: str
-) -> Counter:
+) -> Counter[str]:
     pretoken_counts = Counter()
-    file.seek(boundaries[0])
-    chunk = file.read(boundaries[1] - boundaries[0]).decode("utf-8", errors="ignore")
-    pretokens = re.finditer(pretokenizer, chunk)
-    for pretoken in pretokens:
-        pretoken_counts[pretoken.group(0)] += 1
+    specials_removed =  re.split("|".join(re.escape(st) for st in special_tokens), chunk)
+    for piece in specials_removed:
+        pretokens = re.finditer(pretokenizer, piece)
+        for pretoken in pretokens:
+            pretoken_counts[pretoken.group(0)] += 1
+
     return pretoken_counts
+
+
 
 
 def update_tokens( # updates token lists and pair counts
     merge: tuple[bytes, bytes],
-    tokenized: dict[str, [bytes]],
+    tokenized: dict[str, list[bytes]],
     paircount: Counter,
-    pretoken_count: Counter
+    pretoken_counts: Counter
 ) -> None:
+    merged = merge[0] + merge[1]
+    paircount[merge] = 0
     for pretoken, b in tokenized.items():
+        count = pretoken_counts[pretoken] 
+        # decrement prior to re-counting paris
+        for i in range(len(b) - 1):
+            paircount[(b[i], b[i+1])] -= count
+
         updated_tokens = []
         i = 0
         while i < len(b):
-            if i < len(b) - 1 and b[i] == merge[0] and b[i+i] == merge[1]:
-                updated_tokens.append(bytes(merge))
-                if i > 0:
-                    paircount[(b[i-1], merge[0])] -= pretoken_count[pretoken] 
-                if i + 2 < len(b):
-                    paircount[(merge[1], b[i+2])] -= pretoken_count[pretoken]
+            if i < len(b) - 1 and b[i] == merge[0] and b[i+1] == merge[1]:
+                updated_tokens.append(merged)
                 i += 2
             else:
                 updated_tokens.append(b[i])
+                i += 1
         tokenized[pretoken] = updated_tokens
+
+        for i in range(len(updated_tokens) - 1):
+            paircount[(updated_tokens[i], updated_tokens[i+1])] += count
 
     # remove the merged pair from paircount
     del(paircount[merge])
