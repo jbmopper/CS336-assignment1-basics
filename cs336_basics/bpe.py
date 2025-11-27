@@ -3,11 +3,13 @@ from typing import Any, BinaryIO
 import multiprocessing
 import regex as re
 from collections import Counter
+import json
+import pickle
 
 from torch import mul
 
-# __all__ =   ['train_bpe', 'tokenizer']
-__all__ =   ['train_bpe']
+__all__ =   ['train_bpe', 'tokenizer']
+# __all__ =   ['train_bpe']
 
 def train_bpe(input_path: str | os.PathLike,
     vocab_size: int,
@@ -256,9 +258,38 @@ def find_chunk_boundaries(
 
  
     # for get_tokenizer from adapters.py
-#  def tokenizer(
-#     vocab: dict[int, bytes],
-#     merges: list[tuple[bytes, bytes]],
-#     special_tokens: list[str] | None = None,
-# ) -> Any:
-# 
+class Tokenizer(
+#    vocab: dict[int, bytes],
+#    merges: list[tuple[bytes, bytes]],
+#    special_tokens: list[str] | None = None,
+):
+    def __init__(self, vocab, merges, special_tokens=None):
+        self.vocab = vocab
+        self.merges = merges
+        self.special_tokens = special_tokens
+        return
+
+    @classmethod
+    def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
+        with open(vocab_filepath, "rb") as f: #vocab: dict[int, bytes]
+           vocab_raw = json.load(f)
+
+        vocab = {int(k): v.encode("utf-8") for k, v in vocab_raw.itmes()}
+
+        with open(merges_filepath, "rb") as f: #bot: just use pickle
+            merges = pickle.load(f)
+
+        return cls(vocab, merges, special_tokens)
+
+    def encode(self, text: str) -> list[int]: 
+        # so let's see... 
+        to_encode = text.encode("utf-8") # makes a bytes object... errors?
+
+
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+
+
+    def decode(self, ids: list[int]) -> str:
+
+
+def radix(vocab: dict[int, bytes]) -> 

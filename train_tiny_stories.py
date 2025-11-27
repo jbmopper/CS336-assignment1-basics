@@ -1,5 +1,6 @@
 import time
 import json
+import pickle
 from cs336_basics.bpe import train_bpe
 
 # Path to TinyStories (check where it is on your system)
@@ -20,9 +21,11 @@ with open("vocab.json", "w") as f:
     # Convert bytes keys to strings for JSON serialization
     json.dump({k: v.decode("utf-8", errors="replace") for k, v in vocab.items()}, f)
 
-with open("merges.txt", "w") as f:
-    for m1, m2 in merges:
-        f.write(f"{m1.decode('utf-8', errors='replace')} {m2.decode('utf-8', errors='replace')}\n")
+# with open("merges.txt", "w") as f:
+#    for m1, m2 in merges:
+#        f.write(f"{m1.decode('utf-8', errors='replace')} {m2.decode('utf-8', errors='replace')}\n")
+with open("merges.pkl", "wb") as f:
+    pickle.dump(merges, f)
 
 # Find longest token
 longest_token = max(vocab.values(), key=len)
