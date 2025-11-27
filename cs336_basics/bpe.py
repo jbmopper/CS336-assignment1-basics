@@ -266,7 +266,9 @@ class Tokenizer(
     def __init__(self, vocab, merges, special_tokens=None):
         self.vocab = vocab
         self.merges = merges
-        self.special_tokens = special_tokens
+        self.special_tokens = special_tokens or []
+        self.trie_root = self._build_trie()
+        self.byte_to_id = {v: k for k, v in vocab.items()}
         return
 
     @classmethod
@@ -281,15 +283,33 @@ class Tokenizer(
 
         return cls(vocab, merges, special_tokens)
 
+    def build_trie(self.vocab) -> TrieNode:
+        root = TrieNode()
+        for k, v in self.vocab.items():
+            node = root
+            for byte in v:
+                kk = bytes(byte)
+                if kk not in node.children:
+                    node.children[kk] = TrieNode()
+                node = node.children[kk]
+            node.token_id = k
+        return root          
+
+
+
     def encode(self, text: str) -> list[int]: 
         # so let's see... 
         to_encode = text.encode("utf-8") # makes a bytes object... errors?
 
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
-
+        return
 
     def decode(self, ids: list[int]) -> str:
+        return
 
+class TrieNode():
+    def __init__(self):
+        self.children: dict[bytes, "TrieNode"] = {}
+        self.token_id: int | None = None
 
-def radix(vocab: dict[int, bytes]) -> 
