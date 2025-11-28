@@ -6,6 +6,8 @@ from collections import Counter
 import json
 import pickle
 
+from dataclasses import dataclass, field
+
 from torch import mul
 
 __all__ =   ['train_bpe', 'tokenizer']
@@ -17,9 +19,9 @@ def train_bpe(input_path: str | os.PathLike,
     **kwargs,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
 
-    PAT = build_pretokenizer(special_tokens)
+    # PAT = build_pretokenizer(special_tokens)
 
-    # PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
     vocab = {i: bytes([i]) for i in range(256)} # also need special tokens?
     for special_token in special_tokens:
@@ -74,15 +76,15 @@ def train_bpe(input_path: str | os.PathLike,
     return vocab, merges
 
 
-def build_pretokenizer(special_tokens: list[str]) -> str: # wrong approach, RTFA
+def build_pretokenizer(special_tokens: list[str]) -> str: # using for encode
     # Escape regex special characters in tokens
-    # escaped = [re.escape(token) for token in special_tokens]
-    # special_pattern = "|".join(escaped)
+    escaped = [re.escape(token) for token in special_tokens]
+    special_pattern = "|".join(escaped)
     # # PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""" 
     base_pat = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
     
-    # if special_pattern:
-    #     return f"{special_pattern}|{base_pat}"
+    if special_pattern:
+         return f"{special_pattern}|{base_pat}"
     return base_pat
 
 def _worker(args):
@@ -258,6 +260,16 @@ def find_chunk_boundaries(
 
  
     # for get_tokenizer from adapters.py
+
+@dataclass
+class TrieNode():
+    children: dict = field(default_factory=dict)
+    token_id: int | None = None
+    # def __init__(self):
+    #     self.children: dict[bytes, "TrieNode"] = {}
+    #     self.token_id: int | None = None
+
+
 class Tokenizer(
 #    vocab: dict[int, bytes],
 #    merges: list[tuple[bytes, bytes]],
@@ -276,14 +288,18 @@ class Tokenizer(
         with open(vocab_filepath, "rb") as f: #vocab: dict[int, bytes]
            vocab_raw = json.load(f)
 
-        vocab = {int(k): v.encode("utf-8") for k, v in vocab_raw.items()}
+        vocab = {int(k): v.encode("utf-8") for k, v in vocab_raw.items()}   
+        if special_tokens is not None:
+            for special_token in special_tokens:
+                if special_tokens not in vocab.values():
+                    vocab[len(vocab)] = special_token.encode("utf-8")
 
         with open(merges_filepath, "rb") as f: #bot: just use pickle
             merges = pickle.load(f)
 
         return cls(vocab, merges, special_tokens)
 
-    def build_trie(self.vocab) -> TrieNode:
+    def build_trie(self) -> TrieNode:
         root = TrieNode()
         for token_id, bytes_ in self.vocab.items():
             node = root
@@ -299,14 +315,37 @@ class Tokenizer(
 
     def encode(self, text: str) -> list[int]: 
         # so let's see... 
-        text = text.encode("utf-8") # makes a bytes object... errors?
+        # text = text.encode("utf-8") # makes a bytes object... errors?
+        # want a list of pretokenized strings
+
+        pretokenizer = build_pretokenizer(self.special_tokens)
+        pretokens = re.finditer(pretokenizer, text) # special tokens are elements in the iterator
+
         encoded: list[int] = []
         node = self.trie_root
-        for b in text:
-            if bytes([b]) in node.children:
-                node = node.children[b]
-            else:
-                encoded.append(node.token_id)
+
+        for pretoken in pretokens:
+            bytes_ = pretoken.group(0).encode("utf-8", errors="ignore") # strict?
+                # immutable list of byte integers
+                # ... get the longest match 
+
+            for i, b in enumerate(bytes_):
+                
+                if bytes([b]) in node.children:
+                    node = node.children[bytes([b])]
+                else:
+
+
+
+            i = 0
+            while i < len(bytes_): # we're already on the next byte
+                if bytes([b]) in node.children:
+                    node = node.children[bytes([b])]
+                else:
+                    encoded.append(node.token_id)
+                    node = self.trie_root
+
+
 
         return encoded
 
@@ -323,10 +362,7 @@ class Tokenizer(
         for id_ in ids:
             result += self.vocab[id_]
 
-        return result.encode("utf-8", errors="replace")
+        return result.decode("utf-8", errors="replace")
 
-class TrieNode():
-    def __init__(self):
-        self.children: dict[bytes, "TrieNode"] = {}
-        self.token_id: int | None = None
+
 
