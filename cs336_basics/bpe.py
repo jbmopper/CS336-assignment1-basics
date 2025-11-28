@@ -264,11 +264,11 @@ class Tokenizer(
 #    special_tokens: list[str] | None = None,
 ):
     def __init__(self, vocab, merges, special_tokens=None):
-        self.vocab = vocab
-        self.merges = merges
+        self.vocab: dict[int, bytes] = vocab
+        self.merges: list[tuple[bytes, bytes]] = merges
         self.special_tokens = special_tokens or []
         self.trie_root = self._build_trie()
-        self.byte_to_id = {v: k for k, v in vocab.items()}
+        self.byte_to_id: dict[bytes, int] = {v: k for k, v in vocab.items()}
         return
 
     @classmethod
@@ -276,7 +276,7 @@ class Tokenizer(
         with open(vocab_filepath, "rb") as f: #vocab: dict[int, bytes]
            vocab_raw = json.load(f)
 
-        vocab = {int(k): v.encode("utf-8") for k, v in vocab_raw.itmes()}
+        vocab = {int(k): v.encode("utf-8") for k, v in vocab_raw.items()}
 
         with open(merges_filepath, "rb") as f: #bot: just use pickle
             merges = pickle.load(f)
@@ -285,28 +285,45 @@ class Tokenizer(
 
     def build_trie(self.vocab) -> TrieNode:
         root = TrieNode()
-        for k, v in self.vocab.items():
+        for token_id, bytes_ in self.vocab.items():
             node = root
-            for byte in v:
-                kk = bytes(byte)
-                if kk not in node.children:
-                    node.children[kk] = TrieNode()
-                node = node.children[kk]
-            node.token_id = k
+            for byte in bytes_:
+                k = bytes([byte])
+                if k not in node.children:
+                    node.children[k] = TrieNode()
+                node = node.children[k]
+            node.token_id = token_id
         return root          
 
 
 
     def encode(self, text: str) -> list[int]: 
         # so let's see... 
-        to_encode = text.encode("utf-8") # makes a bytes object... errors?
+        text = text.encode("utf-8") # makes a bytes object... errors?
+        encoded: list[int] = []
+        node = self.trie_root
+        for b in text:
+            if bytes([b]) in node.children:
+                node = node.children[b]
+            else:
+                encoded.append(node.token_id)
+
+        return encoded
+
+
+
+
 
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
         return
 
     def decode(self, ids: list[int]) -> str:
-        return
+        result = b""
+        for id_ in ids:
+            result += self.vocab[id_]
+
+        return result.encode("utf-8", errors="replace")
 
 class TrieNode():
     def __init__(self):
