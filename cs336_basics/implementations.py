@@ -35,11 +35,11 @@ class SwiGLU(nn.Module):
         # self.w2 = nn.Linear(d_ff, d_model, bias=False)
         # self.w3 = nn.Linear(d_model, d_ff, bias=False)
         # self.swish = nn.SiLU()
-        self.swish = lambda x: x * torch.sigmoid(x)
+        # self.swish = lambda x: x * torch.sigmoid(x)
         
 
     def forward(self, x):
-        return self.w2(self.swish(self.w1(x)) * self.w3(x))
+        return self.w2(silu(self.w1(x)) * self.w3(x))
 
 def rmsnorm(eps, weights, in_features):
     """
