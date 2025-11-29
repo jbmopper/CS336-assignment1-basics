@@ -434,7 +434,10 @@ def run_rmsnorm(
         RMSNorm of the `in_features`.
     """
     # raise NotImplementedError
-    return rmsnorm(eps, weights, in_features)
+    # return rmsnorm(eps, weights, in_features)
+    rms = MyRMSNorm(d_model, eps)
+    rms.weights.data = weights
+    return rms.forward(in_features)
 
 
 def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:

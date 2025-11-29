@@ -4,7 +4,7 @@ from torch.nn.parameter import Parameter, UninitializedParameter
 from jaxtyping import Float, Int, Bool
 from torch import Tensor
 
-__all__ =   ['MyLinear', 'MyEmbedding']
+__all__ =   ['MyLinear', 'MyEmbedding', 'MyRMSNorm']
 
 class MyLinear(nn.Module):
     def __init__(self,
@@ -40,3 +40,22 @@ class MyEmbedding(nn.Module):
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         return self.embeddings[token_ids]
 
+class MyRMSNorm(nn.Module):
+    def __init__(self,
+        d_model,
+        eps, 
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.eps = eps
+        self.weights = Parameter(torch.ones((d_model))) # noting in TFA about initializing
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        in_dtype = x.dtype
+        x = x.to(torch.float32)
+
+        rms = torch.sqrt(self.eps + torch.mean(x ** 2, dim=-1, keepdim=True))
+        result = (x/rms) * self.weights
+        return result.to(in_dtype)
