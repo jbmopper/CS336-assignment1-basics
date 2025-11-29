@@ -4,7 +4,7 @@ from torch.nn.parameter import Parameter, UninitializedParameter
 from jaxtyping import Float, Int, Bool
 from torch import Tensor
 
-__all__ =   ['MyLinear']
+__all__ =   ['MyLinear', 'MyEmbedding']
 
 class MyLinear(nn.Module):
     def __init__(self,
@@ -24,3 +24,19 @@ class MyLinear(nn.Module):
     def forward(self, x: Float[Tensor, " ... d_in"]) -> Tensor:
         # W gets added to the test via assighment in the adapter
         return torch.matmul(x, self.weight.T)
+
+class MyEmbedding(nn.Module):
+    def __init__(self,
+        num_embeddings, 
+        embedding_dim, 
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None
+    ):
+        super().__init__()
+        self.embeddings = Parameter(torch.empty((num_embeddings, embedding_dim)))
+        self._sigma = 2/(num_embeddings + embedding_dim)
+        torch.nn.init.trunc_normal_(self.embeddings, 0, (self._sigma), -3*self._sigma, 3*self._sigma) 
+
+    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+        return self.embeddings[token_ids]
+
