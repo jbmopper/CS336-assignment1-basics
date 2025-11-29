@@ -322,28 +322,31 @@ class Tokenizer(
         pretokens = re.finditer(pretokenizer, text) # special tokens are elements in the iterator
 
         encoded: list[int] = []
-        node = self.trie_root
+        
 
         for pretoken in pretokens:
             bytes_ = pretoken.group(0).encode("utf-8", errors="ignore") # strict?
                 # immutable list of byte integers
                 # ... get the longest match 
-
-            for i, b in enumerate(bytes_):
-                
-                if bytes([b]) in node.children:
-                    node = node.children[bytes([b])]
+            node = self.trie_root
+            # nodes = []
+            last_node = None
+            for i in range(len(bytes_)):
+                # start at root, or checking a node
+                if bytes([bytes_[i]]) in node.children:
+                    # track where we are
+                    # nodes.append(node)
+                    if node.token_id is not None:
+                        last_node = node
+                    # go down
+                    node = node.children[bytes([bytes_[i]])]
                 else:
-
-
-
-            i = 0
-            while i < len(bytes_): # we're already on the next byte
-                if bytes([b]) in node.children:
-                    node = node.children[bytes([b])]
-                else:
-                    encoded.append(node.token_id)
-                    node = self.trie_root
+                    # if not, the last value was the longest
+                    # encoded.append(nodes[i-1].token_id)
+                    encoded.append(last_node.token_id)
+                    # and we go to the node for the unmatched byte, which should exist per construction
+                    node = self.trie_root.children[bytes([bytes_[i-1]])]
+                    # ... just make a "last node"?
 
 
 
