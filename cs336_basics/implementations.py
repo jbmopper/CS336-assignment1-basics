@@ -5,6 +5,7 @@ from jaxtyping import Float, Int, Bool
 import numpy.typing as npt
 from collections.abc import Iterable
 import math
+from cs336_basics.implementation2 import *
 
 
 __all__ =   [ 
@@ -25,15 +26,20 @@ class SwiGLU(nn.Module):
     
     def __init__(self, d_model, d_ff) -> None:
         super().__init__()
-        self.w1 = nn.Linear(d_model, d_ff, bias=False)
-        self.w2 = nn.Linear(d_ff, d_model, bias=False)
-        self.w3 = nn.Linear(d_model, d_ff, bias=False)
+        self.w1 = MyLinear(d_model, d_ff)
+        self.w2 = MyLinear(d_ff, d_model)
+        self.w3 = MyLinear(d_model, d_ff)
         # w1_weight, w2_weight, w3_weight
         # get added by the calling function...
-        self.swish = nn.SiLU()
+        # self.w1 = nn.Linear(d_model, d_ff, bias=False)
+        # self.w2 = nn.Linear(d_ff, d_model, bias=False)
+        # self.w3 = nn.Linear(d_model, d_ff, bias=False)
+        # self.swish = nn.SiLU()
+        self.swish = lambda x: x * torch.sigmoid(x)
+        
 
     def forward(self, x):
-        return self.w2(self.swish(self.w1(x))*self.w3(x))
+        return self.w2(self.swish(self.w1(x)) * self.w3(x))
 
 def rmsnorm(eps, weights, in_features):
     """
