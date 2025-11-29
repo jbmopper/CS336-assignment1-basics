@@ -4,7 +4,7 @@ from torch.nn.parameter import Parameter, UninitializedParameter
 from jaxtyping import Float, Int, Bool
 from torch import Tensor
 
-__all__ =   ['MyLinear', 'MyEmbedding', 'MyRMSNorm']
+__all__ =   ['MyLinear', 'MyEmbedding', 'MyRMSNorm', 'Rope']
 
 class MyLinear(nn.Module):
     def __init__(self,
