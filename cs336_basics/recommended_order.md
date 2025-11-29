@@ -47,7 +47,7 @@
 ## Tier 5: Serialization & Tokenization (independent)
 18. `run_save_checkpoint` / `run_load_checkpoint` - Save/load model checkpoints
     - Test: `tests/test_serialization.py::test_checkpointing`
-19. `get_tokenizer` - Create BPE tokenizer from vocab/merges
+19. ✅ `get_tokenizer` - Create BPE tokenizer from vocab/merges
     - Tests: `tests/test_tokenizer.py::test_*` (many tests)
 20. ✅ `run_train_bpe` - Train a BPE tokenizer
     - Test: `tests/test_train_bpe.py::test_train_bpe`

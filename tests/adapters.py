@@ -10,6 +10,7 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 from cs336_basics.implementations import *
+from cs336_basics.implementation2 import *
 from cs336_basics.bpe import *
 
 def run_linear(
@@ -31,7 +32,10 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
 
-    return linear(weights, in_features)
+    # return linear(weights, in_features)
+    linear = MyLinear(d_in, d_out)
+    linear.weight.data = weights
+    return linear.forward(in_features)
     
 
 
