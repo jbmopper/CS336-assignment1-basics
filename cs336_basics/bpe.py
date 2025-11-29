@@ -3,6 +3,7 @@ from typing import Any, BinaryIO
 import multiprocessing
 import regex as re
 from collections import Counter
+from collections.abc import Iterable, Iterator
 import json
 import pickle
 
@@ -10,7 +11,7 @@ from dataclasses import dataclass, field
 
 from torch import mul
 
-__all__ =   ['train_bpe', 'tokenizer']
+__all__ =   ['train_bpe', 'Tokenizer']
 # __all__ =   ['train_bpe']
 
 def train_bpe(input_path: str | os.PathLike,
@@ -280,6 +281,7 @@ class Tokenizer(
         self.merges: list[tuple[bytes, bytes]] = merges
         self.special_tokens = special_tokens or []
         self.trie_root = self._build_trie()
+        self._specials_dict = {}
         self.byte_to_id: dict[bytes, int] = {v: k for k, v in vocab.items()}
         return
 
@@ -299,7 +301,7 @@ class Tokenizer(
 
         return cls(vocab, merges, special_tokens)
 
-    def build_trie(self) -> TrieNode:
+    def _build_trie(self) -> TrieNode:
         root = TrieNode()
         for token_id, bytes_ in self.vocab.items():
             node = root
@@ -312,53 +314,77 @@ class Tokenizer(
         return root          
 
 
-
     def encode(self, text: str) -> list[int]: 
         # so let's see... 
         # text = text.encode("utf-8") # makes a bytes object... errors?
         # want a list of pretokenized strings
 
-        pretokenizer = build_pretokenizer(self.special_tokens)
-        pretokens = re.finditer(pretokenizer, text) # special tokens are elements in the iterator
-
         encoded: list[int] = []
-        
+        pretokenizer = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+        if self.special_tokens:
+            pattern = "(" + "|".join(re.escape(st) for st in self.special_tokens) + ")"
+            parts = re.split(pattern, text)
+        else:
+            parts = [text]
 
-        for pretoken in pretokens:
-            bytes_ = pretoken.group(0).encode("utf-8", errors="ignore") # strict?
-                # immutable list of byte integers
-                # ... get the longest match 
-            node = self.trie_root
-            # nodes = []
-            last_node = None
-            for i in range(len(bytes_)):
-                # start at root, or checking a node
-                if bytes([bytes_[i]]) in node.children:
-                    # track where we are
-                    # nodes.append(node)
-                    if node.token_id is not None:
-                        last_node = node
-                    # go down
-                    node = node.children[bytes([bytes_[i]])]
-                else:
-                    # if not, the last value was the longest
-                    # encoded.append(nodes[i-1].token_id)
-                    encoded.append(last_node.token_id)
-                    # and we go to the node for the unmatched byte, which should exist per construction
-                    node = self.trie_root.children[bytes([bytes_[i-1]])]
-                    # ... just make a "last node"?
+        for part in parts:
+            if part in self.special_tokens:
+                encoded.append(self.byte_to_id[part.encode("utf-8")])
+            elif part:
+                pretokens = re.finditer(pretokenizer, part) # special tokens are elements in the iterator
+                for pretoken in pretokens:
+                    bytes_ = pretoken.group(0).encode("utf-8", errors="ignore") # strict?
+                  #  if pretoken.group(0) in self.special_tokens:
+                  #      encoded.append(self.byte_to_id[bytes_])
+                  #  else:
+                            # immutable list of byte integers
+                            # ... get the longest match
+                        
+                    node = self.trie_root
+                    # nodes = []
+                    last: tuple[int, int] = None
+                    i = 0
+                    while i < len(bytes_):
+                        key = bytes([bytes_[i]])
+                        if key in node.children:
+                            node = node.children[key]
+                            if node.token_id is not None:
+                                last = (i, node.token_id)
+                            i += 1
+                        else:
+                            encoded.append(last[1])
+                            i = last[0] + 1
+                            node = self.trie_root
+                            last = None
+                    
+                    if last is not None:
+                        encoded.append(last[1])
 
-
+                    # for i in range(len(bytes_)):
+                    #     # start at root, or checking a node
+                    #     if bytes([bytes_[i]]) in node.children:
+                    #         # track where we are
+                    #         # nodes.append(node)
+                    #         if node.token_id is not None:
+                    #             last_node = node
+                    #         # go down
+                    #         node = node.children[bytes([bytes_[i]])]
+                    #     else:
+                    #         # if not, the last value was the longest
+                    #         # encoded.append(nodes[i-1].token_id)
+                    #         encoded.append(last_node.token_id)
+                    #         # and we go to the node for the unmatched byte, which should exist per construction
+                    #         node = self.trie_root.children[bytes([bytes_[i-1]])]
+                    #         # ... just make a "last node"?
 
         return encoded
 
 
-
-
-
-
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
-        return
+        for chunk in iterable:
+            for token_id in self.encode(chunk):
+                yield token_id
+
 
     def decode(self, ids: list[int]) -> str:
         result = b""
