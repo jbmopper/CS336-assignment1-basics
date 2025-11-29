@@ -322,8 +322,11 @@ class Tokenizer(
         encoded: list[int] = []
         pretokenizer = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
         if self.special_tokens:
-            pattern = "(" + "|".join(re.escape(st) for st in self.special_tokens) + ")"
+            sorted_special = sorted(self.special_tokens, key=len, reverse=True)
+            pattern = "(" + "|".join(re.escape(st) for st in sorted_special) + ")"
             parts = re.split(pattern, text)
+            # pattern = "(" + "|".join(re.escape(st) for st in self.special_tokens) + ")"
+            # parts = re.split(pattern, text)
         else:
             parts = [text]
 
@@ -333,32 +336,51 @@ class Tokenizer(
             elif part:
                 pretokens = re.finditer(pretokenizer, part) # special tokens are elements in the iterator
                 for pretoken in pretokens:
-                    bytes_ = pretoken.group(0).encode("utf-8", errors="ignore") # strict?
+                    tokens = [bytes([b]) for b in pretoken.group(0).encode("utf-8", errors="ignore")] # strict?
+                    for merge0, merge1 in self.merges:
+                        i = 0
+                        while i < len(tokens) - 1:
+                            if tokens[i] == merge0 and tokens[i+1] == merge1:
+                                tokens[i] = merge0 + merge1
+                                tokens.pop(i+1)
+                            else:
+                                i += 1
+                    for token in tokens:
+                        encoded.append(self.byte_to_id[token])
+
+
+
+
                   #  if pretoken.group(0) in self.special_tokens:
                   #      encoded.append(self.byte_to_id[bytes_])
                   #  else:
                             # immutable list of byte integers
                             # ... get the longest match
-                        
-                    node = self.trie_root
-                    # nodes = []
-                    last: tuple[int, int] = None
-                    i = 0
-                    while i < len(bytes_):
-                        key = bytes([bytes_[i]])
-                        if key in node.children:
-                            node = node.children[key]
-                            if node.token_id is not None:
-                                last = (i, node.token_id)
-                            i += 1
-                        else:
-                            encoded.append(last[1])
-                            i = last[0] + 1
-                            node = self.trie_root
-                            last = None
-                    
-                    if last is not None:
-                        encoded.append(last[1])
+                   # start = 0
+                   # while start < len(bytes_): 
+                   #     node = self.trie_root
+                   #     # nodes = []
+                   #     last: tuple[int, int] = None
+                   #     i = start
+                   #     while i < len(bytes_):
+                   #         key = bytes([bytes_[i]])
+                   #         if key in node.children:
+                   #             node = node.children[key]
+                   #             if node.token_id is not None:
+                   #                 last = (i, node.token_id)
+                   #             i += 1
+                   #         else:
+                   #             break
+                   #            # encoded.append(last[1])
+                   #            # i = last[0] + 1
+                   #            # node = self.trie_root
+                   #            # last = None
+                   #     
+                   #     if last is not None:
+                   #         encoded.append(last[1])
+                   #         start = last[0] + 1
+                   #     else:
+                   #         start += 1
 
                     # for i in range(len(bytes_)):
                     #     # start at root, or checking a node
