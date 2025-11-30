@@ -3,8 +3,9 @@ import torch.nn as nn
 from torch.nn.parameter import Parameter, UninitializedParameter
 from jaxtyping import Float, Int, Bool
 from torch import Tensor
+import einx
 
-__all__ =   ['MyLinear', 'MyEmbedding', 'MyRMSNorm', 'Rope']
+__all__ =   ['MyLinear', 'MyEmbedding', 'MyRMSNorm', 'Rope', 'Multihead']
 
 class MyLinear(nn.Module):
     def __init__(self,
@@ -60,39 +61,56 @@ class MyRMSNorm(nn.Module):
         result = (x/rms) * self.weights
         return result.to(in_dtype)
 
+def build_mthetas(theta: float,
+    d_k: int,
+    max_seq_len: int
+    ) -> Float[Tensor, "... max_seq_len d_half"]:
+    assert d_k % 2 == 0
+    dk2 = d_k // 2
+    thetas = torch.ones(dk2) * theta
+    thetas = thetas ** ((-2 * torch.arange(dk2)) / (d_k)) # [d_k/2]
+
+    # ms = token_positions[..., : max_seq_len] # [... max_seq_len]
+    ms = torch.arange(max_seq_len) # all possible ms
+    # mthetas = ms.unsqueeze(-1) * thetas.unsqueeze(0) # [..., max_seq_len, d_k/2]
+    mthetas = einx.multiply("... seq, d -> ... seq d", ms, thetas) # ... not needed now
+
+    return mthetas
+
+
 class Rope(nn.Module):
     def __init__(self,
     theta: float,
     d_k: int,
     max_seq_len: int,
+    token_positions: Int[Tensor, " ... sequence_length"],
     device: torch.device | None = None
 ):
         super().__init__()
         self.theta = theta
         self.d_k = d_k
         self.max_seq_len = max_seq_len
+        mthetas = build_mthetas(theta, d_k, max_seq_len, token_positions)
+        coses = torch.cos(mthetas)
+        sines = torch.sin(mthetas)
+        self.register_buffer('coses', coses, persistent=False)
+        self.register_buffer('sines', sines, persistent=False)
+
 
     def forward(self,
         in_query_or_key: Float[Tensor, " ... sequence_length d_k"], 
         token_positions: Int[Tensor, " ... sequence_length"]
         ) -> Float[Tensor, " ... sequence_length d_k"]:
 
-        assert self.d_k % 2 == 0
-        dk2 = self.d_k // 2
-        thetas = torch.ones(dk2) * self.theta
-        theta_exponents = (-2 * torch.arange(dk2)) / (self.d_k)
-        thetas = thetas ** theta_exponents
-
-        ms = token_positions[..., : self.max_seq_len]
-        mthetas = ms.unsqueeze(-1) * thetas.unsqueeze(0) # [..., max_seq_len, d_k/2]
-        # still have inputs in rows (?) and want R tensor [..., d_k, max_seq_len]
-        # so each R slice goes across the columns 
-        coses = torch.cos(mthetas)
-        coses_diag = torch.repeat_interleave(coses, 2, dim=-1)
-        sines = torch.sin(mthetas)
+        tps = token_positions[..., : self.max_seq_len]
+        coses = self.coses[tps]
+        sines = self.sines[tps]
         neg_sines = -sines
+
+        # TODO: replace with non-full matrix implementation
+        coses_diag = torch.repeat_interleave(coses, 2, dim=-1)
         R = torch.diag_embed(coses_diag) # [..., max_seq_len, d, d]
-        indices = torch.arange(dk2)
+        indices = torch.arange(d_k//2)
         R[..., (indices * 2), (indices * 2) + 1] = neg_sines[..., indices] 
         # zero-indexed rows 0, 2, ... (dim -2); columns 1, 3... (dim -1) 
         R[..., (indices * 2) + 1, (indices * 2)] = sines[..., indices] 
@@ -101,3 +119,125 @@ class Rope(nn.Module):
 
         out = torch.einsum(R, [..., 0, 1, 2], in_query_or_key, [..., 0, 2], [..., 0, 1])
         return out
+
+def softmax(in_features, dim):
+    # adjusted_features = in_features - torch.max(in_features) 
+    adjusted_features = in_features - torch.max(in_features, dim=dim, keepdim=True)[0]
+    exp_features = torch.exp(adjusted_features)
+    return exp_features / torch.sum(exp_features, dim=dim, keepdim=True)
+
+def scaled_dot_product_attention(
+    Q: Float[Tensor, "... queries d_k"],
+    K: Float[Tensor, "... keys d_k"],
+    V: Float[Tensor, "... values d_v"],
+    mask: Bool[Tensor, "... queries keys"] | None = None
+) -> Float[Tensor, "... queries d_v"]:
+
+    d_k = Q.size(-1)
+    scaled_product = (Q @ K.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k, dtype=Q.dtype))
+    if mask is not None: 
+        scaled_product = scaled_product.masked_fill_(~mask, float('-inf'))
+    output = softmax(scaled_product, -1) @ V
+    return output
+
+class Multihead(nn.Module):
+    def __init__(self,
+        num_heads: int,
+        d_model: int,
+        # q_proj_weight: Float[Tensor, " d_k d_in"],
+        # k_proj_weight: Float[Tensor, " d_k d_in"],
+        # v_proj_weight: Float[Tensor, " d_v d_in"],
+        # o_proj_weight: Float[Tensor, " d_model d_v"],
+    ) -> Float[Tensor, " ... sequence_length d_out"]:
+        super().__init__()
+        self.num_heads = num_heads
+        self.d_model = d_model
+        # self.d_k = self.d_v = d_model//num_heads # actually no
+        # self.d_k = self.d_v = self.d_model # initially dk * heads
+        self._sigma = 2/(self.d_model+self.d_model)
+        self.q_proj_weights = Parameter(torch.empty((self.d_model, self.d_model)))
+        self.k_proj_weights = Parameter(torch.empty((self.d_model, self.d_model)))
+        self.v_proj_weights = Parameter(torch.empty((self.d_model, self.d_model)))
+        self.o_proj_weights = Parameter(torch.empty((self.d_model, self.d_model)))
+        torch.nn.init.trunc_normal_(self.q_proj_weights, 0, (self._sigma), -3*self._sigma, 3*self._sigma)
+        torch.nn.init.trunc_normal_(self.k_proj_weights, 0, (self._sigma), -3*self._sigma, 3*self._sigma)
+        torch.nn.init.trunc_normal_(self.v_proj_weights, 0, (self._sigma), -3*self._sigma, 3*self._sigma)
+        torch.nn.init.trunc_normal_(self.o_proj_weights, 0, (self._sigma), -3*self._sigma, 3*self._sigma)
+
+    def forward(self, in_features: Float[Tensor, " ... sequence_length d_in"]) -> Float[Tensor, " ... sequence_length d_out"]:
+        qkv_weights = einx.rearrange( # want to keep dm for in @ QKV [d_seq dm] @ [dm 3*dk]
+        # also want to separate out heads
+            "dm dk, dm dk, dm dk -> dm (dk + dk + dk)", 
+            self.q_proj_weights.T, self.k_proj_weights.T, self.v_proj_weights.T
+        )   
+        QKV = in_features @ qkv_weights # [seq_length 3*dk]
+        # so last time I worked to # [..., num_heads, seq_len, d_k (or v) // num_heads]
+        head_dim = self.d_model // self.num_heads
+       # Q, K, V = einx.rearrange(
+       #     "... sl ((h dk) + (h dk) + (h dk)) -> ... h sl dk, ... h sl dk, ... h sl dk", 
+       #     QKV, h=self.num_heads, dk=head_dim)
+        Q, K, V = einx.rearrange("... sl (dk + dk + dk) -> ... sl dk, ... sl dk, ... sl dk", QKV)
+        Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=head_dim)
+        K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=head_dim)
+        V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=head_dim)
+
+        mask = torch.ones((Q.size(-2), Q.size(-2)), dtype=bool)
+        mask = torch.tril(mask)
+
+        sdpa = scaled_dot_product_attention(Q, K, V, mask)
+        # [..., num_heads, seq_len, head_dim]
+        sdpa = einx.rearrange("... h sl d -> ... sl (h d)", sdpa)
+        # [..., seq-lem, d_v]
+        # o is [d_model, d_v] so transpose
+        return sdpa @ self.o_proj_weights.T
+
+class MultiheadRope(nn.Module):
+    def __init__(self,
+        num_heads: int,
+        d_model: int,
+        theta: int,
+        max_seq_len: int
+        # token_positions: int?
+    ) -> Float[Tensor, " ... sequence_length d_out"]:
+        super().__init__()
+        self.num_heads = num_heads
+        self.d_model = d_model
+        # self.d_k = self.d_v = d_model//num_heads # actually no
+        # self.d_k = self.d_v = self.d_model # initially dk * heads
+        self._sigma = 2/(self.d_model+self.d_model)
+        self.q_proj_weights = Parameter(torch.empty((self.d_model, self.d_model)))
+        self.k_proj_weights = Parameter(torch.empty((self.d_model, self.d_model)))
+        self.v_proj_weights = Parameter(torch.empty((self.d_model, self.d_model)))
+        self.o_proj_weights = Parameter(torch.empty((self.d_model, self.d_model)))
+        torch.nn.init.trunc_normal_(self.q_proj_weights, 0, (self._sigma), -3*self._sigma, 3*self._sigma)
+        torch.nn.init.trunc_normal_(self.k_proj_weights, 0, (self._sigma), -3*self._sigma, 3*self._sigma)
+        torch.nn.init.trunc_normal_(self.v_proj_weights, 0, (self._sigma), -3*self._sigma, 3*self._sigma)
+        torch.nn.init.trunc_normal_(self.o_proj_weights, 0, (self._sigma), -3*self._sigma, 3*self._sigma)
+        self.rope = Rope
+
+    def forward(self, in_features: Float[Tensor, " ... sequence_length d_in"]) -> Float[Tensor, " ... sequence_length d_out"]:
+        qkv_weights = einx.rearrange( # want to keep dm for in @ QKV [d_seq dm] @ [dm 3*dk]
+        # also want to separate out heads
+            "dm dk, dm dk, dm dk -> dm (dk + dk + dk)", 
+            self.q_proj_weights.T, self.k_proj_weights.T, self.v_proj_weights.T
+        )   
+        QKV = in_features @ qkv_weights # [seq_length 3*dk]
+        # so last time I worked to # [..., num_heads, seq_len, d_k (or v) // num_heads]
+        head_dim = self.d_model // self.num_heads
+       # Q, K, V = einx.rearrange(
+       #     "... sl ((h dk) + (h dk) + (h dk)) -> ... h sl dk, ... h sl dk, ... h sl dk", 
+       #     QKV, h=self.num_heads, dk=head_dim)
+        Q, K, V = einx.rearrange("... sl (dk + dk + dk) -> ... sl dk, ... sl dk, ... sl dk", QKV)
+        Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=head_dim)
+        K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=head_dim)
+        V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=head_dim)
+
+        mask = torch.ones((Q.size(-2), Q.size(-2)), dtype=bool)
+        mask = torch.tril(mask)
+
+        sdpa = scaled_dot_product_attention(Q, K, V, mask)
+        # [..., num_heads, seq_len, head_dim]
+        sdpa = einx.rearrange("... h sl d -> ... sl (h d)", sdpa)
+        # [..., seq-lem, d_v]
+        # o is [d_model, d_v] so transpose
+        return sdpa @ self.o_proj_weights.T

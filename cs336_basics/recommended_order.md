@@ -15,12 +15,12 @@
    - Test: `tests/test_model.py::test_swiglu`
 
 ## Tier 2: Attention mechanism
-7.  ✅ `run_scaled_dot_product_attention` - Core attention computation
+7. ✅ `run_scaled_dot_product_attention` - Core attention computation
    - Test: `tests/test_model.py::test_scaled_dot_product_attention`
    - Test: `tests/test_model.py::test_4d_scaled_dot_product_attention`
-8.  ✅ `run_rope` - Rotary positional embeddings
+8. ✅ `run_rope` - Rotary positional embeddings
    - Test: `tests/test_model.py::test_rope`
-9.  `run_multihead_self_attention` - Multi-head attention without RoPE
+9. ✅ `run_multihead_self_attention` - Multi-head attention without RoPE
    - Test: `tests/test_model.py::test_multihead_self_attention`
 10.  `run_multihead_self_attention_with_rope` - Multi-head attention with RoPE
     - Test: `tests/test_model.py::test_multihead_self_attention_with_rope`
