@@ -83,14 +83,13 @@ class Rope(nn.Module):
     theta: float,
     d_k: int,
     max_seq_len: int,
-    token_positions: Int[Tensor, " ... sequence_length"],
     device: torch.device | None = None
 ):
         super().__init__()
         self.theta = theta
         self.d_k = d_k
         self.max_seq_len = max_seq_len
-        mthetas = build_mthetas(theta, d_k, max_seq_len, token_positions)
+        mthetas = build_mthetas(theta, d_k, max_seq_len)
         coses = torch.cos(mthetas)
         sines = torch.sin(mthetas)
         self.register_buffer('coses', coses, persistent=False)
@@ -102,23 +101,38 @@ class Rope(nn.Module):
         token_positions: Int[Tensor, " ... sequence_length"]
         ) -> Float[Tensor, " ... sequence_length d_k"]:
 
-        tps = token_positions[..., : self.max_seq_len]
-        coses = self.coses[tps]
-        sines = self.sines[tps]
-        neg_sines = -sines
+        tps = token_positions[..., : self.max_seq_len] # really just [... seq_len]
+        coses = self.coses[tps] # [... seq_len d_k//2], 
+        sines = self.sines[tps] 
 
         # TODO: replace with non-full matrix implementation
-        coses_diag = torch.repeat_interleave(coses, 2, dim=-1)
-        R = torch.diag_embed(coses_diag) # [..., max_seq_len, d, d]
-        indices = torch.arange(d_k//2)
-        R[..., (indices * 2), (indices * 2) + 1] = neg_sines[..., indices] 
-        # zero-indexed rows 0, 2, ... (dim -2); columns 1, 3... (dim -1) 
-        R[..., (indices * 2) + 1, (indices * 2)] = sines[..., indices] 
-        # zero-indexed rows 1, 3, ... (dim -2); columns 0, 2... (dim -1) 
+        # rotate pairs of (q_(2k -1), q_(2k)) by theta_ik for k in 1...d_k/2
+        # which is the pattern matrix... 
+
+        in_pairs = einx.rearrange("... sl (dk2 pair) -> ... sl dk2 pair", in_query_or_key, pair=2)
+        # [... seq_len d_k//2 2]
+        arrrs = torch.stack(
+            (torch.stack([coses, -sines], dim=-1),
+            torch.stack([sines, coses], dim=-1)), 
+            dim=-2
+        ) # [... seq_len d_k//2 2 2]
+        # rotated = einx.dot("... sl dk2 rot1 rot2, ... sl dk2 pair -> ... sl dk2 rot1", arrrs, in_pairs)
+        rotated = einx.dot("a... sl dk2 row col, b... sl dk2 col -> b... sl dk2 row", arrrs, in_pairs)
+        rotated = einx.rearrange("... sl dk pair -> ... sl (dk pair)", rotated)
+
+
+        # coses_diag = torch.repeat_interleave(coses, 2, dim=-1)
+        # R = torch.diag_embed(coses_diag) # [..., max_seq_len, d, d]
+        # indices = torch.arange(d_k//2)
+        # R[..., (indices * 2), (indices * 2) + 1] = neg_sines[..., indices] 
+        # # zero-indexed rows 0, 2, ... (dim -2); columns 1, 3... (dim -1) 
+        # R[..., (indices * 2) + 1, (indices * 2)] = sines[..., indices] 
+        # # zero-indexed rows 1, 3, ... (dim -2); columns 0, 2... (dim -1) 
     
 
-        out = torch.einsum(R, [..., 0, 1, 2], in_query_or_key, [..., 0, 2], [..., 0, 1])
-        return out
+        # out = torch.einsum(R, [..., 0, 1, 2], in_query_or_key, [..., 0, 2], [..., 0, 1])
+        # return out
+        return rotated
 
 def softmax(in_features, dim):
     # adjusted_features = in_features - torch.max(in_features) 
