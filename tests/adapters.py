@@ -34,7 +34,7 @@ def run_linear(
 
     # return linear(weights, in_features)
     linear = MyLinear(d_in, d_out)
-    linear.weight.data = weights
+    linear.weight.data.copy_(weights)
     return linear.forward(in_features)
     
 
@@ -60,7 +60,7 @@ def run_embedding(
     # return embeddings(weights, token_ids)
     # return weights[token_ids]
     embedding = MyEmbedding(vocab_size, d_model)
-    embedding.embeddings.data = weights
+    embedding.embeddings.data.copy_(weights)
     return embedding.forward(token_ids)
 
 
@@ -97,9 +97,9 @@ def run_swiglu(
     # swiglu.w3.weight.data = w3_weight
     # raise NotImplementedError
     swiglu = SwiGLU(d_model, d_ff)
-    swiglu.w1.weight.data = w1_weight
-    swiglu.w2.weight.data = w2_weight
-    swiglu.w3.weight.data = w3_weight 
+    swiglu.w1.weight.data.copy_(w1_weight)
+    swiglu.w2.weight.data.copy_(w2_weight)
+    swiglu.w3.weight.data.copy_(w3_weight)
 
     return swiglu.forward(in_features)
 
@@ -167,10 +167,10 @@ def run_multihead_self_attention(
    #      in_features
    #  )
     msa = Multihead(num_heads, d_model)
-    msa.q_proj_weights.data = q_proj_weight
-    msa.k_proj_weights.data = k_proj_weight
-    msa.v_proj_weights.data = v_proj_weight
-    msa.o_proj_weights.data = o_proj_weight
+    msa.q_proj_weights.data.copy_(q_proj_weight)
+    msa.k_proj_weights.data.copy_(k_proj_weight)
+    msa.v_proj_weights.data.copy_(v_proj_weight)
+    msa.o_proj_weights.data.copy_(o_proj_weight)
 
     return msa.forward(in_features)
 
@@ -226,10 +226,10 @@ def run_multihead_self_attention_with_rope(
    #     token_positions
    # )
     mr = MultiheadRope(num_heads, d_model, theta, max_seq_len)
-    mr.q_proj_weights.data = q_proj_weight
-    mr.k_proj_weights.data = k_proj_weight
-    mr.v_proj_weights.data = v_proj_weight
-    mr.o_proj_weights.data = o_proj_weight 
+    mr.q_proj_weights.data.copy_(q_proj_weight)
+    mr.k_proj_weights.data.copy_(k_proj_weight)
+    mr.v_proj_weights.data.copy_(v_proj_weight)
+    mr.o_proj_weights.data.copy_(o_proj_weight )
 
     return mr.forward(in_features, token_positions)
 
@@ -333,7 +333,18 @@ def run_transformer_block(
         d_ff,
         max_seq_len,
         theta)
-    return tb.forward(weights, in_features)
+    sd = tb.state_dict() #should've used same names
+    sd["rms1.weights"] = weights["ln1.weight"]
+    sd["rms2.weights"] = weights["ln2.weight"]
+    sd["ff.w1.weight"] = weights["ffn.w1.weight"]
+    sd["ff.w2.weight"]= weights["ffn.w2.weight"]
+    sd["ff.w3.weight"]= weights["ffn.w3.weight"]
+    sd["mhr.q_proj_weights"] = weights["attn.q_proj.weight"] # these names...
+    sd["mhr.k_proj_weights"] = weights["attn.k_proj.weight"]
+    sd["mhr.v_proj_weights"] = weights["attn.v_proj.weight"]
+    sd["mhr.o_proj_weights"] = weights["attn.output_proj.weight"]
+    tb.load_state_dict(sd)
+    return tb.forward(in_features)
 
 
 def run_transformer_lm(
@@ -452,7 +463,7 @@ def run_rmsnorm(
     # raise NotImplementedError
     # return rmsnorm(eps, weights, in_features)
     rms = MyRMSNorm(d_model, eps)
-    rms.weights.data = weights
+    rms.weights.data.copy_(weights)
     return rms.forward(in_features)
 
 
