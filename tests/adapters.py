@@ -436,6 +436,14 @@ def run_transformer_lm(
         context_length, # assuming samw 
         rope_theta
     )
+     # x = embeddings(weights["token_embeddings.weight"], in_indices)
+    for i in range
+            weight_prefix = f"layers.{i}."
+            layer_weights = {
+                k.replace(weight_prefix, ""): v
+                for k, v in weights.items()
+                if k.startswith(weight_prefix) # 
+            }
 
     return tl.forward(weights, in_indices)
 

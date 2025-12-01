@@ -230,7 +230,7 @@ class transformer_block(nn.Module):
         self.rms1 = MyRMSNorm(self.d_model, self.eps)
         self.rms2 = MyRMSNorm(self.d_model, self.eps) 
         self.ff = SwiGLU(self.d_model, self.d_ff)
-        self.mhr = MultiheadRope(self.num_heads, self.d_model, self.theta, self.max_seq_len)
+        self.attn = MultiheadRope(self.num_heads, self.d_model, self.theta, self.max_seq_len)
 
 
     def forward(self, in_features):
@@ -279,16 +279,18 @@ class transformer_lm(nn.Module):
         self.d_ff = d_ff
         self.max_seq_len = context_length # assuming samw 
         self.theta = rope_theta
-        self.transformers = nn.ModuleList([
+        self.layers = nn.ModuleList([
             transformer_block(d_model, num_heads, d_ff, context_length, rope_theta)
             for i in range(num_layers)
         ])
         self.eps = 1e-5 # from testing/common practice
+        self.final_norm = MyRMSNorm(self.d_model, self.eps) 
+        self.lm_head = MyLinear(d_model, vocab_size)
+        self.token_embeddings = MyEmbedding(vocab_size, d_model)
 
     def forward(self, weights, in_indices):
         # x = embeddings(weights["token_embeddings.weight"], in_indices)
-        e = MyEmbedding()
-        for i, l in enumerate(self.transformers): # so it goes
+        for i, l in enumerate(self.layers): # so it goes
             weight_prefix = f"layers.{i}."
             layer_weights = {
                 k.replace(weight_prefix, ""): v
