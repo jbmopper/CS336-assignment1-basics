@@ -34,12 +34,12 @@ class MyEmbedding(nn.Module):
         dtype: torch.dtype | None = None
     ):
         super().__init__()
-        self.embeddings = Parameter(torch.empty((num_embeddings, embedding_dim)))
+        self.weight = Parameter(torch.empty((num_embeddings, embedding_dim)))
         self._sigma = 2/(num_embeddings + embedding_dim)
-        torch.nn.init.trunc_normal_(self.embeddings, 0, (self._sigma), -3*self._sigma, 3*self._sigma) 
+        torch.nn.init.trunc_normal_(self.weight, 0, (self._sigma), -3*self._sigma, 3*self._sigma) 
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
-        return self.embeddings[token_ids]
+        return self.weight[token_ids]
 
 class MyRMSNorm(nn.Module):
     def __init__(self,
@@ -51,14 +51,14 @@ class MyRMSNorm(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.eps = eps
-        self.weights = Parameter(torch.ones((d_model))) # noting in TFA about initializing
+        self.weight = Parameter(torch.ones((d_model))) # noting in TFA about initializing
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         in_dtype = x.dtype
         x = x.to(torch.float32)
 
         rms = torch.sqrt(self.eps + torch.mean(x ** 2, dim=-1, keepdim=True))
-        result = (x/rms) * self.weights
+        result = (x/rms) * self.weight
         return result.to(in_dtype)
 
 def build_mthetas(theta: float,

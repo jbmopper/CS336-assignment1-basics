@@ -60,7 +60,7 @@ def run_embedding(
     # return embeddings(weights, token_ids)
     # return weights[token_ids]
     embedding = MyEmbedding(vocab_size, d_model)
-    embedding.embeddings.data.copy_(weights)
+    embedding.weight.data.copy_(weights)
     return embedding.forward(token_ids)
 
 
@@ -334,15 +334,15 @@ def run_transformer_block(
         max_seq_len,
         theta)
     sd = tb.state_dict() #should've used same names
-    sd["rms1.weights"] = weights["ln1.weight"]
-    sd["rms2.weights"] = weights["ln2.weight"]
-    sd["ff.w1.weight"] = weights["ffn.w1.weight"]
-    sd["ff.w2.weight"]= weights["ffn.w2.weight"]
-    sd["ff.w3.weight"]= weights["ffn.w3.weight"]
-    sd["mhr.q_proj_weights"] = weights["attn.q_proj.weight"] # these names...
-    sd["mhr.k_proj_weights"] = weights["attn.k_proj.weight"]
-    sd["mhr.v_proj_weights"] = weights["attn.v_proj.weight"]
-    sd["mhr.o_proj_weights"] = weights["attn.output_proj.weight"]
+    sd["ln1.weight"] = weights["ln1.weight"]
+    sd["ln2.weight"] = weights["ln2.weight"]
+    sd["ffn.w1.weight"] = weights["ffn.w1.weight"]
+    sd["ffn.w2.weight"]= weights["ffn.w2.weight"]
+    sd["ffn.w3.weight"]= weights["ffn.w3.weight"]
+    sd["attn.q_proj_weights"] = weights["attn.q_proj.weight"] # munging names for attention weights
+    sd["attn.k_proj_weights"] = weights["attn.k_proj.weight"]
+    sd["attn.v_proj_weights"] = weights["attn.v_proj.weight"]
+    sd["attn.o_proj_weights"] = weights["attn.output_proj.weight"]
     tb.load_state_dict(sd)
     return tb.forward(in_features)
 
@@ -437,15 +437,33 @@ def run_transformer_lm(
         rope_theta
     )
      # x = embeddings(weights["token_embeddings.weight"], in_indices)
-    for i in range
-            weight_prefix = f"layers.{i}."
-            layer_weights = {
-                k.replace(weight_prefix, ""): v
-                for k, v in weights.items()
-                if k.startswith(weight_prefix) # 
-            }
+    sd = tl.state_dict() #should've used same names
+    sd["token_embeddings.weight"] = weights["token_embeddings.weight"]
+    sd["ln_final.weight"] = weights["ln_final.weight"]
+    sd["lm_head.weight"] = weights["lm_head.weight"]
 
-    return tl.forward(weights, in_indices)
+    for i in range(num_layers):
+        # weight_prefix = f"layers.{i}."
+        sd[f"layers.{i}.ln1.weight"] = weights[f"layers.{i}.ln1.weight"]
+        sd[f"layers.{i}.ln2.weight"] = weights[f"layers.{i}.ln2.weight"]
+        sd[f"layers.{i}.ffn.w1.weight"] = weights[f"layers.{i}.ffn.w1.weight"]
+        sd[f"layers.{i}.ffn.w2.weight"]= weights[f"layers.{i}.ffn.w2.weight"]
+        sd[f"layers.{i}.ffn.w3.weight"]= weights[f"layers.{i}.ffn.w3.weight"]
+        sd[f"layers.{i}.attn.q_proj_weights"] = weights[f"layers.{i}.attn.q_proj.weight"] # munging names for attention weights
+        sd[f"layers.{i}.attn.k_proj_weights"] = weights[f"layers.{i}.attn.k_proj.weight"]
+        sd[f"layers.{i}.attn.v_proj_weights"] = weights[f"layers.{i}.attn.v_proj.weight"]
+        sd[f"layers.{i}.attn.o_proj_weights"] = weights[f"layers.{i}.attn.output_proj.weight"]
+        # layer_weights = {
+        #     k.replace(weight_prefix, ""): v
+        #     for k, v in weights.items()
+        #         if k.startswith(weight_prefix) # 
+        #     }
+
+
+    tl.load_state_dict(sd)
+    return tl.forward(in_indices) 
+    
+
 
 
 def run_rmsnorm(
@@ -471,7 +489,7 @@ def run_rmsnorm(
     # raise NotImplementedError
     # return rmsnorm(eps, weights, in_features)
     rms = MyRMSNorm(d_model, eps)
-    rms.weights.data.copy_(weights)
+    rms.weight.data.copy_(weights)
     return rms.forward(in_features)
 
 

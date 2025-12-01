@@ -227,15 +227,15 @@ class transformer_block(nn.Module):
         self.max_seq_len = max_seq_len
         self.theta = theta
         self.eps = 1e-5 # from testing/common practice
-        self.rms1 = MyRMSNorm(self.d_model, self.eps)
-        self.rms2 = MyRMSNorm(self.d_model, self.eps) 
-        self.ff = SwiGLU(self.d_model, self.d_ff)
+        self.ln1 = MyRMSNorm(self.d_model, self.eps)
+        self.ln2 = MyRMSNorm(self.d_model, self.eps) 
+        self.ffn = SwiGLU(self.d_model, self.d_ff)
         self.attn = MultiheadRope(self.num_heads, self.d_model, self.theta, self.max_seq_len)
 
 
     def forward(self, in_features):
         # norm1 = rmsnorm(self.eps, weights["ln1.weight"], in_features)
-        norm1 = self.rms1.forward(in_features)
+        norm1 = self.ln1.forward(in_features)
         token_positions = torch.arange(in_features.size(-2), dtype=int) # 0...sequence_length
        # attention_output = multihead_self_attention_with_rope(
        #     self.d_model,
@@ -249,16 +249,16 @@ class transformer_block(nn.Module):
        #     norm1,
        #     token_positions
        # )
-        attention_output = self.mhr.forward(norm1, token_positions)
+        attention_output = self.attn.forward(norm1, token_positions)
         in_features = in_features + attention_output
         # norm2 = rmsnorm(self.eps, weights["ln2.weight"], in_features)
-        norm2 = self.rms2.forward(in_features)
+        norm2 = self.ln2.forward(in_features)
         # swiglu = SwiGLU(self.d_model, self.d_ff)
         # swiglu.w1.weight.data = weights["ffn.w1.weight"]
         # swiglu.w2.weight.data = weights["ffn.w2.weight"]
         # swiglu.w3.weight.data = weights["ffn.w3.weight"]
         # ffn_output = swiglu.forward(norm2)
-        ffn_output = self.ff.forward(norm2) # need type annotation for forward arg
+        ffn_output = self.ffn.forward(norm2) # need type annotation for forward arg
         return in_features + ffn_output
 
 class transformer_lm(nn.Module):
@@ -284,24 +284,19 @@ class transformer_lm(nn.Module):
             for i in range(num_layers)
         ])
         self.eps = 1e-5 # from testing/common practice
-        self.final_norm = MyRMSNorm(self.d_model, self.eps) 
+        self.ln_final = MyRMSNorm(self.d_model, self.eps) 
         self.lm_head = MyLinear(d_model, vocab_size)
         self.token_embeddings = MyEmbedding(vocab_size, d_model)
 
-    def forward(self, weights, in_indices):
-        # x = embeddings(weights["token_embeddings.weight"], in_indices)
-        for i, l in enumerate(self.layers): # so it goes
-            weight_prefix = f"layers.{i}."
-            layer_weights = {
-                k.replace(weight_prefix, ""): v
-                for k, v in weights.items()
-                if k.startswith(weight_prefix) # 
-            }
-            x = l.forward(layer_weights, x)
+    def forward(self, in_indices):
+        x = self.token_embeddings.forward(in_indices)
+
+        for l in self.layers:
+            x = l.forward(x)
+        
+        x = self.ln_final.forward(x)
             
-        x = rmsnorm(self.eps, weights["ln_final.weight"], x) 
-        # [... d_model]
-        return x @ weights["lm_head.weight"].T # [... vocab_size]
+        return self.lm_head.forward(x)
 
 def get_batch(dataset: npt.NDArray, batch_size: int, context_length: int, device: str
 ) -> tuple[torch.Tensor, torch.Tensor]:
