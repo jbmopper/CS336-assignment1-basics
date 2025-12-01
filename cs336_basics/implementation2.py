@@ -5,7 +5,7 @@ from jaxtyping import Float, Int, Bool
 from torch import Tensor
 import einx
 
-__all__ =   ['MyLinear', 'MyEmbedding', 'MyRMSNorm', 'Rope', 'Multihead']
+__all__ =   ['MyLinear', 'MyEmbedding', 'MyRMSNorm', 'Rope', 'Multihead', 'MultiheadRope']
 
 class MyLinear(nn.Module):
     def __init__(self,
@@ -216,7 +216,7 @@ class MultiheadRope(nn.Module):
         super().__init__()
         self.num_heads = num_heads
         self.d_model = d_model
-        # self.d_k = self.d_v = d_model//num_heads # actually no
+        self.d_head = d_model//num_heads 
         # self.d_k = self.d_v = self.d_model # initially dk * heads
         self._sigma = 2/(self.d_model+self.d_model)
         self.q_proj_weights = Parameter(torch.empty((self.d_model, self.d_model)))
@@ -227,9 +227,12 @@ class MultiheadRope(nn.Module):
         torch.nn.init.trunc_normal_(self.k_proj_weights, 0, (self._sigma), -3*self._sigma, 3*self._sigma)
         torch.nn.init.trunc_normal_(self.v_proj_weights, 0, (self._sigma), -3*self._sigma, 3*self._sigma)
         torch.nn.init.trunc_normal_(self.o_proj_weights, 0, (self._sigma), -3*self._sigma, 3*self._sigma)
-        self.rope = Rope
+        self.rope = Rope(theta, self.d_head, max_seq_len)
 
-    def forward(self, in_features: Float[Tensor, " ... sequence_length d_in"]) -> Float[Tensor, " ... sequence_length d_out"]:
+    def forward(self, 
+        in_features: Float[Tensor, " ... sequence_length d_in"], 
+        token_positions: Int[Tensor, " ... sequence_length"]
+        ) -> Float[Tensor, " ... sequence_length d_out"]:
         qkv_weights = einx.rearrange( # want to keep dm for in @ QKV [d_seq dm] @ [dm 3*dk]
         # also want to separate out heads
             "dm dk, dm dk, dm dk -> dm (dk + dk + dk)", 
@@ -237,15 +240,17 @@ class MultiheadRope(nn.Module):
         )   
         QKV = in_features @ qkv_weights # [seq_length 3*dk]
         # so last time I worked to # [..., num_heads, seq_len, d_k (or v) // num_heads]
-        head_dim = self.d_model // self.num_heads
        # Q, K, V = einx.rearrange(
        #     "... sl ((h dk) + (h dk) + (h dk)) -> ... h sl dk, ... h sl dk, ... h sl dk", 
        #     QKV, h=self.num_heads, dk=head_dim)
         Q, K, V = einx.rearrange("... sl (dk + dk + dk) -> ... sl dk, ... sl dk, ... sl dk", QKV)
-        Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=head_dim)
-        K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=head_dim)
-        V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=head_dim)
+        Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=self.d_head)
+        K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=self.d_head)
+        V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=self.d_head)
 
+        Q = self.rope.forward(Q, token_positions)
+        K = self.rope.forward(K, token_positions)
+        # no rope for V
         mask = torch.ones((Q.size(-2), Q.size(-2)), dtype=bool)
         mask = torch.tril(mask)
 

@@ -225,6 +225,13 @@ def run_multihead_self_attention_with_rope(
    #     in_features,
    #     token_positions
    # )
+    mr = MultiheadRope(num_heads, d_model, theta, max_seq_len)
+    mr.q_proj_weights.data = q_proj_weight
+    mr.k_proj_weights.data = k_proj_weight
+    mr.v_proj_weights.data = v_proj_weight
+    mr.o_proj_weights.data = o_proj_weight 
+
+    return mr.forward(in_features, token_positions)
 
 
 def run_rope(
