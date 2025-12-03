@@ -39,8 +39,9 @@ class MyEmbedding(nn.Module):
     ):
         super().__init__()
         self.weight = Parameter(torch.empty((num_embeddings, embedding_dim)))
-        self._sigma = 2/(num_embeddings + embedding_dim)
-        torch.nn.init.trunc_normal_(self.weight, 0, (self._sigma), -3*self._sigma, 3*self._sigma) 
+        # self._sigma = 2/(num_embeddings + embedding_dim)
+        # torch.nn.init.trunc_normal_(self.weight, 0, (self._sigma), -3*self._sigma, 3*self._sigma) 
+        torch.nn.init.trunc_normal_(self.weight, 0, 1.0, -3.0, 3.0) 
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         return self.weight[token_ids]
@@ -213,7 +214,7 @@ class MultiheadRope(nn.Module):
     def __init__(self,
         num_heads: int,
         d_model: int,
-        theta: int,
+        theta: float,
         max_seq_len: int
         # token_positions: int?
     ) -> Float[Tensor, " ... sequence_length d_out"]:

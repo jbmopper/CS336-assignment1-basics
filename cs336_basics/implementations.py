@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
-from torch import Tensor, pi
+from torch import Tensor, pi, tensor
 from jaxtyping import Float, Int, Bool
 import numpy.typing as npt
 from collections.abc import Iterable
-import math
+import einx
 from cs336_basics.implementation2 import *
 
 
@@ -54,13 +54,18 @@ def softmax(in_features, dim):
 def silu(in_features):
     return in_features * torch.sigmoid(in_features)
 
-def crossentropy(inputs, targets):
+def crossentropy(inputs: torch.Tensor, targets: torch.Tensor):
     # for each batch, the target has the index of the correct class
     # so if that is class c, the cross entropy is just -log(input[c])
     # thus select the target index from the input and average -log values
-    rows = torch.arange(inputs.shape[0])
-    probs = torch.log_softmax(inputs, dim=1) # researched numerical stability
-    used_probs = probs[rows, targets] 
+    
+    # need to handle batch dimensions...
+    # inputs: [batches seq_length vocab_size] where the last column are the logits
+    # targets: [batches seq_length] where the values in the column are the correct word index
+    
+    probs = torch.log_softmax(inputs, dim=-1)  # [batches seq_length vocab_size]
+
+    used_probs = torch.gather(probs, -1, targets.unsqueeze(-1)) # want to select from the vocab size column... repeat vocab_size times?
     return -torch.mean(used_probs)
     
 def scaled_dot_product_attention(
@@ -323,7 +328,9 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: flo
         # map(lambda x: x.grad -> x.grad/(norm/max_l2_norm), parameters )
         for param in parameters:
             if param.grad is not None:
-                param.grad = param.grad / (norm/max_l2_norm)
+                # adding epsilon 
+                eps = 1e-6
+                param.grad = param.grad / (norm/(max_l2_norm+eps))
 
     return None 
 

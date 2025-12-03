@@ -39,13 +39,13 @@
     - Test: `tests/test_data.py::test_get_batch`
 15. ✅ `run_gradient_clipping` - Gradient clipping for training stability
     - Test: `tests/test_nn_utils.py::test_gradient_clipping`
-16. `get_adamw_cls` - AdamW optimizer
+16. ✅ `get_adamw_cls` - AdamW optimizer
     - Test: `tests/test_optimizer.py::test_adamw`
 17. ✅ `run_get_lr_cosine_schedule` - Cosine learning rate schedule with warmup
     - Test: `tests/test_optimizer.py::test_get_lr_cosine_schedule`
 
 ## Tier 5: Serialization & Tokenization (independent)
-18. `run_save_checkpoint` / `run_load_checkpoint` - Save/load model checkpoints
+18. ✅ `run_save_checkpoint` / `run_load_checkpoint` - Save/load model checkpoints
     - Test: `tests/test_serialization.py::test_checkpointing`
 19. ✅ `get_tokenizer` - Create BPE tokenizer from vocab/merges
     - Tests: `tests/test_tokenizer.py::test_*` (many tests)
