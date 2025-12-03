@@ -330,7 +330,7 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: flo
             if param.grad is not None:
                 # adding epsilon 
                 eps = 1e-6
-                param.grad = param.grad / (norm/(max_l2_norm+eps))
+                param.grad = param.grad / ((norm+eps)/(max_l2_norm))
 
     return None 
 
