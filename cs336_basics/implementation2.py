@@ -287,7 +287,7 @@ def get_lr_cosine_schedule(    it: int,
         cos_tot_it = cosine_cycle_iters - warmup_iters
         lr = ( min_learning_rate   
             + 0.5 * (max_learning_rate - min_learning_rate) 
-            * (1 + math.cos((cos_it * pi) / (cos_tot_it))))
+            * (1 + math.cos((cos_it * math.pi) / (cos_tot_it))))
     
     else:
         lr = min_learning_rate
