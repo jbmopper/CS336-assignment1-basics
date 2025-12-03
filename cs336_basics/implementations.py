@@ -12,7 +12,7 @@ __all__ =   [
                 'SwiGLU', 'softmax', 'silu',
                 'crossentropy', 'scaled_dot_product_attention',
                 'transformer_block', 'transformer_lm', 'get_batch',
-                'gradient_clipping', 
+                'gradient_clipping', 'save_checkpoint', 'load_checkpoint'
             ]
 
 
@@ -301,6 +301,7 @@ class transformer_lm(nn.Module):
 def get_batch(dataset: npt.NDArray, batch_size: int, context_length: int, device: str
 ) -> tuple[torch.Tensor, torch.Tensor]:
 
+    # guess mmap is during load?
     starts = torch.randint(low=0, high=(len(dataset) - context_length), size=(batch_size,))
     indices = starts.unsqueeze(1) + torch.arange(context_length) # [batch_size, context_length]
 
@@ -376,3 +377,20 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: flo
 #        lr = min_learning_rate
 #    
 #    return lr
+
+def save_checkpoint(model: torch.nn.Module, 
+    optimizer: torch.optim.Optimizer,
+    iteration: int, 
+    out):
+        obj = dict(model=model.state_dict(), optimizer=optimizer.state_dict(), iteration=iteration)
+        torch.save(obj, out) 
+        
+
+def load_checkpoint(src, 
+    model: torch.nn.Module, optimizer: torch.optim.Optimizer) -> int:
+    obj = torch.load(src)
+    model.load_state_dict(obj["model"])
+    optimizer.load_state_dict(obj["optimizer"])
+    return obj["iteration"]
+
+
