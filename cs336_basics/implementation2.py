@@ -295,28 +295,30 @@ def get_lr_cosine_schedule(    it: int,
     return lr
 
 class MyAdamW(torch.optim.Optimizer):
-    def __init__(self,params, defaults):
-        defaults = {
-            "m1": None, # 1st moment, shape(grad)
-            "m2": None, # 2nd moment, shape(grad)
-            "b1": 0.9, # 1st moment beta
-            "b2": 0.999, # 2nd moment beta
-            # t is being handled in step?
-            "t": 0, # step number
-            "eps": 1e-08,
-            # "lr": None, 
-            # Get from scheduler then adjust by the betas per the formula
-            "decay": 1 # Default?
-        } # add adamw stuff
-        super().__init__(params, defaults) 
+    def __init__(self,
+        params,
+        lr=1e-03,
+        betas=(0.9, 0.999),
+        eps=1e-08,
+        weight_decay=1e-02,) -> None:
+            defaults = dict(
+                betas=betas,
+                eps=eps,
+                lr = lr,
+                weight_decay= weight_decay
+            )
+            super().__init__(params, defaults) 
 
     # bot recommends @toch.no_grad / with torch.enable_grad():
     @torch.no_grad()
     def step(self, closure: Optional[Callable] = None):
         # loss = None if closure is None else closure()
+        loss = None
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
+
+        
 
         for group in self.param_groups:
             # get layer-specific parameters e.g. lr = group["lr"]
@@ -328,17 +330,22 @@ class MyAdamW(torch.optim.Optimizer):
 
                 state = self.state[p] 
                 t = state.get("t", 0)
-                grad = p.grad.data
-                m1 = state.get("m1", torch.empty_like(grad))
-                m2 = state.get("m2", torch.empty_like(grad))
-                b1 = state["b1"]
-                b2 = state["b2"]
-                lr = get_lr_cosine_schedule(t, )
-                decay = state["decay"]
-                m1 = m1 * b1 
-                p.data -= "🍍" # add adamw stuff
-                state["t"] = t + 1
-
-
+                m = state.get("m", torch.zeros_like(p.data))
+                v = state.get("v", torch.zeros_like(p.data))
+                betas = group["betas"]                
+                lr = group["lr"]
+                eps = group["eps"]
+                weight_decay = group["weight_decay"]
+                
+                t += 1
+                state["t"] = t
+                m.mul_(betas[0]).add_((1-betas[0]) * p.grad.data)
+                state["m"] = m
+                v.mul_(betas[1]).add_((1-betas[1]) * (p.grad.data ** 2))
+                state["v"] = v
+                # don't need to update m or v because in-place
+                alpha_t = lr * (((1 - betas[1]**t)**0.5)/(1 - betas[0]**t))
+                p.data -=  alpha_t * (m / (torch.sqrt(v) + eps))
+                p.data -= lr * weight_decay * p.data
 
         return loss
