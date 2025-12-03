@@ -12,7 +12,7 @@ __all__ =   [
                 'SwiGLU', 'softmax', 'silu',
                 'crossentropy', 'scaled_dot_product_attention',
                 'transformer_block', 'transformer_lm', 'get_batch',
-                'gradient_clipping', 'get_lr_cosine_schedule'
+                'gradient_clipping', 
             ]
 
 
@@ -326,53 +326,53 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: flo
 
     return None 
 
-class MyAdamW(torch.optim.Optimizer):
-    def __init__(self,
-    params,
-    lr=0.001,
-    betas=(0.9, .999),
-    eps=1e-08,
-    weight_decay=0.01
-    ) -> None:
-        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
-        super().__init__(params, defaults)
-
-    
-    def step(self):
-        for group in self.param_groups:
-            lr = group['lr'] # for example
-            for param in group['params']:
-                if param.grad is not None:
-                    param = - lr * param.grad # for example
-
-
+# class MyAdamW(torch.optim.Optimizer):
+#     def __init__(self,
+#     params,
+#     lr=0.001,
+#     betas=(0.9, .999),
+#     eps=1e-08,
+#     weight_decay=0.01
+#     ) -> None:
+#         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+#         super().__init__(params, defaults)
+# 
+#     
+#     def step(self):
+#         for group in self.param_groups:
+#             lr = group['lr'] # for example
+#             for param in group['params']:
+#                 if param.grad is not None:
+#                     param = - lr * param.grad # for example
 
 
-def get_lr_cosine_schedule(    it: int,
-    max_learning_rate: float,
-    min_learning_rate: float,
-    warmup_iters: int,
-    cosine_cycle_iters: int,
-):
-    if it < warmup_iters:
-        # rise over run ... warmup from 0?
-        lr = (max_learning_rate / warmup_iters) * it
-        
-    elif (warmup_iters <= it <= cosine_cycle_iters):
-        # recursive approximation from torch.optim.lr_scheduler.CosineAnnealingLR.html
-        # eta_next = (min_learning_rate + 
-        #     (eta_now - min_learning_rate) * 
-        #     ((1 + torch.cos( ((it+1) * pi) / cosine_cycle_iters ) ) / 
-        #     (1 + torch.cos((it * pi) / cosine_cycle_iters ))) 
-        # )
-        # should use the closed form... from the assignment!
-        cos_it = it - warmup_iters
-        cos_tot_it = cosine_cycle_iters - warmup_iters
-        lr = ( min_learning_rate   
-            + 0.5 * (max_learning_rate - min_learning_rate) 
-            * (1 + math.cos((cos_it * pi) / (cos_tot_it))))
-    
-    else:
-        lr = min_learning_rate
-    
-    return lr
+
+
+#def get_lr_cosine_schedule(    it: int,
+#    max_learning_rate: float,
+#    min_learning_rate: float,
+#    warmup_iters: int,
+#    cosine_cycle_iters: int,
+#):
+#    if it < warmup_iters:
+#        # rise over run ... warmup from 0?
+#        lr = (max_learning_rate / warmup_iters) * it
+#        
+#    elif (warmup_iters <= it <= cosine_cycle_iters):
+#        # recursive approximation from torch.optim.lr_scheduler.CosineAnnealingLR.html
+#        # eta_next = (min_learning_rate + 
+#        #     (eta_now - min_learning_rate) * 
+#        #     ((1 + torch.cos( ((it+1) * pi) / cosine_cycle_iters ) ) / 
+#        #     (1 + torch.cos((it * pi) / cosine_cycle_iters ))) 
+#        # )
+#        # should use the closed form... from the assignment!
+#        cos_it = it - warmup_iters
+#        cos_tot_it = cosine_cycle_iters - warmup_iters
+#        lr = ( min_learning_rate   
+#            + 0.5 * (max_learning_rate - min_learning_rate) 
+#            * (1 + math.cos((cos_it * pi) / (cos_tot_it))))
+#    
+#    else:
+#        lr = min_learning_rate
+#    
+#    return lr

@@ -4,8 +4,12 @@ from torch.nn.parameter import Parameter, UninitializedParameter
 from jaxtyping import Float, Int, Bool
 from torch import Tensor
 import einx
+from collections.abc import Callable, Iterable
+from typing import Optional
+import math
 
-__all__ =   ['MyLinear', 'MyEmbedding', 'MyRMSNorm', 'Rope', 'Multihead', 'MultiheadRope']
+__all__ =   ['MyLinear', 'MyEmbedding', 'MyRMSNorm', 'Rope', 'Multihead', 'MultiheadRope',
+                'MyAdamW', 'get_lr_cosine_schedule']
 
 class MyLinear(nn.Module):
     def __init__(self,
@@ -260,3 +264,81 @@ class MultiheadRope(nn.Module):
         # [..., seq-lem, d_v]
         # o is [d_model, d_v] so transpose
         return sdpa @ self.o_proj_weights.T
+
+def get_lr_cosine_schedule(    it: int,
+    max_learning_rate: float,
+    min_learning_rate: float,
+    warmup_iters: int,
+    cosine_cycle_iters: int,
+):
+    if it < warmup_iters:
+        # rise over run ... warmup from 0?
+        lr = (max_learning_rate / warmup_iters) * it
+        
+    elif (warmup_iters <= it <= cosine_cycle_iters):
+        # recursive approximation from torch.optim.lr_scheduler.CosineAnnealingLR.html
+        # eta_next = (min_learning_rate + 
+        #     (eta_now - min_learning_rate) * 
+        #     ((1 + torch.cos( ((it+1) * pi) / cosine_cycle_iters ) ) / 
+        #     (1 + torch.cos((it * pi) / cosine_cycle_iters ))) 
+        # )
+        # should use the closed form... from the assignment!
+        cos_it = it - warmup_iters
+        cos_tot_it = cosine_cycle_iters - warmup_iters
+        lr = ( min_learning_rate   
+            + 0.5 * (max_learning_rate - min_learning_rate) 
+            * (1 + math.cos((cos_it * pi) / (cos_tot_it))))
+    
+    else:
+        lr = min_learning_rate
+    
+    return lr
+
+class MyAdamW(torch.optim.Optimizer):
+    def __init__(self,params, defaults):
+        defaults = {
+            "m1": None, # 1st moment, shape(grad)
+            "m2": None, # 2nd moment, shape(grad)
+            "b1": 0.9, # 1st moment beta
+            "b2": 0.999, # 2nd moment beta
+            # t is being handled in step?
+            "t": 0, # step number
+            "eps": 1e-08,
+            # "lr": None, 
+            # Get from scheduler then adjust by the betas per the formula
+            "decay": 1 # Default?
+        } # add adamw stuff
+        super().__init__(params, defaults) 
+
+    # bot recommends @toch.no_grad / with torch.enable_grad():
+    @torch.no_grad()
+    def step(self, closure: Optional[Callable] = None):
+        # loss = None if closure is None else closure()
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            # get layer-specific parameters e.g. lr = group["lr"]
+
+            for p in group["params"]:
+                # the actual weight tensors
+                if p.grad is None:
+                    continue # so indented
+
+                state = self.state[p] 
+                t = state.get("t", 0)
+                grad = p.grad.data
+                m1 = state.get("m1", torch.empty_like(grad))
+                m2 = state.get("m2", torch.empty_like(grad))
+                b1 = state["b1"]
+                b2 = state["b2"]
+                lr = get_lr_cosine_schedule(t, )
+                decay = state["decay"]
+                m1 = m1 * b1 
+                p.data -= "🍍" # add adamw stuff
+                state["t"] = t + 1
+
+
+
+        return loss
