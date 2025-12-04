@@ -49,7 +49,12 @@ def get_setup(file):
 def load_data(path, dtype: np.dtype=np.float32: np.dtype, data_size) -> np.NDArray:
     with 
 
+   # device = get_device() ...
 
 
 def create_model(config) -> nn.Module:
 
+
+
+def something():
+    torch.optimizer.zero_grad(set_to_none=True)
