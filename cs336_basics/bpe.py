@@ -10,7 +10,7 @@ import json
 import pickle
 from dataclasses import dataclass, field
 
-__all__ = ['train_bpe', 'Tokenizer']
+__all__ = ['train_bpe', 'Tokenizer', 'save_bpe', 'load_bpe']
 
 # GPT-2 style pretokenization pattern
 GPT2_PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
@@ -69,6 +69,45 @@ def train_bpe(
 
     return vocab, merges
 
+def save_bpe(output_path: str | os.PathLike,
+    vocab: dict[int, bytes],
+    merges: list[tuple[bytes, bytes]]) -> None:
+    """Save tokenizer to directory."""
+    os.makedirs(output_path, exist_ok=True)
+    
+    vocab_path = os.path.join(output_path, "vocab.json")
+    merges_path = os.path.join(output_path, "merges.txt")
+    
+    # Save vocab
+    vocab_str = {str(k): v.decode('latin-1') for k, v in vocab.items()}
+    with open(vocab_path, "w", encoding="latin-1") as f:
+        json.dump(vocab_str, f, ensure_ascii=False)
+    
+    # Save merges
+    with open(merges_path, "w", encoding="latin-1") as f:
+        for a, b in merges:
+            f.write(f"{a.decode('latin-1')}\t{b.decode('latin-1')}\n")
+
+def load_bpe(input_path: str | os.PathLike) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+    """Load vocab and merges from directory (matching save_bpe format)."""
+    import json
+    
+    vocab_path = os.path.join(input_path, "vocab.json")
+    merges_path = os.path.join(input_path, "merges.txt")
+    
+    # Load vocab - latin-1 encoded
+    with open(vocab_path, "r", encoding="latin-1") as f:
+        vocab_str = json.load(f)
+    vocab = {int(k): v.encode('latin-1') for k, v in vocab_str.items()}
+    
+    # Load merges - tab-separated, latin-1 encoded
+    merges = []
+    with open(merges_path, "r", encoding="latin-1") as f:
+        for line in f:
+            a, b = line.rstrip('\n').split('\t')
+            merges.append((a.encode('latin-1'), b.encode('latin-1')))
+    
+    return vocab, merges
 
 def _build_pretokenizer(special_tokens: list[str]) -> str:
     """Build regex pattern that handles special tokens."""
@@ -221,6 +260,7 @@ class Tokenizer:
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
         """Load tokenizer from vocab and merges files."""
+        """Kept for compatibility with existing test fixtures."""
         with open(vocab_filepath, "rb") as f:
             vocab_raw = json.load(f)
 

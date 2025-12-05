@@ -27,5 +27,5 @@ __all__ = [
     'get_batch', 'gradient_clipping', 'save_checkpoint', 'load_checkpoint',
     'AdamW', 'get_lr_cosine_schedule',
     # Tokenizer
-    'train_bpe', 'Tokenizer',
+    'train_bpe', 'Tokenizer', 'save_bpe', 'load_bpe'
 ]
