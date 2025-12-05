@@ -216,6 +216,7 @@ class Tokenizer:
         self.special_tokens = special_tokens or []
         self.trie_root = self._build_trie()
         self.byte_to_id: dict[bytes, int] = {v: k for k, v in vocab.items()}
+        self.merge_prios = {merge: i for i, merge in enumerate(self.merges)}
 
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
@@ -235,7 +236,7 @@ class Tokenizer:
         return cls(vocab, merges, special_tokens)
 
     def _build_trie(self) -> TrieNode:
-        """Build trie from vocabulary for efficient lookup."""
+        """Build trie from vocabulary for efficient lookup - wrong approach."""
         root = TrieNode()
         for token_id, bytes_ in self.vocab.items():
             node = root
@@ -259,6 +260,8 @@ class Tokenizer:
         else:
             parts = [text]
 
+        
+
         for part in parts:
             if part in self.special_tokens:
                 encoded.append(self.byte_to_id[part.encode("utf-8")])
@@ -266,16 +269,46 @@ class Tokenizer:
                 pretokens = re.finditer(pretokenizer, part)
                 for pretoken in pretokens:
                     tokens = [bytes([b]) for b in pretoken.group(0).encode("utf-8", errors="ignore")]
-                    for merge0, merge1 in self.merges:
-                        i = 0
-                        while i < len(tokens) - 1:
-                            if tokens[i] == merge0 and tokens[i + 1] == merge1:
-                                tokens[i] = merge0 + merge1
-                                tokens.pop(i + 1)
-                            else:
-                                i += 1
+                    # rewrite rewrite rewrite
+                    # 
+                    merge_idx = None # will be the index
+                    merges_exhausted = False
+                    while merges_exhausted is not True:
+                        highest_prio = float('inf')
+                        for i in range(len(tokens) - 1):
+                            if (tokens[i], tokens[i+1]) in self.merge_prios:
+                                if (p:= self.merge_prios[(tokens[i], tokens[i+1])]) < highest_prio:
+                            # if p := self.merge_prios.get((tokens[i], tokens[i+1]), float('inf')) < highest_prio:
+                                # highest prio = lowest p!
+                                    merge_idx = i
+                                    highest_prio = p
+
+                        if merge_idx is not None:
+                            tokens[merge_idx] = tokens[merge_idx] + tokens[merge_idx+1]
+                            tokens.pop(merge_idx + 1)
+                            merge_idx = None
+                        else:
+                            merges_exhausted = True
+
+                    
                     for token in tokens:
                         encoded.append(self.byte_to_id[token])
+                            
+
+
+                    
+
+
+                    # for merge0, merge1 in self.merges:
+                    #     i = 0
+                    #     while i < len(tokens) - 1:
+                    #         if tokens[i] == merge0 and tokens[i + 1] == merge1:
+                    #             tokens[i] = merge0 + merge1
+                    #             tokens.pop(i + 1)
+                    #         else:
+                    #             i += 1
+                    # for token in tokens:
+                    #     encoded.append(self.byte_to_id[token])
 
         return encoded
 
