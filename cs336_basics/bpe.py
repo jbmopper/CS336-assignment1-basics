@@ -270,6 +270,11 @@ class Tokenizer:
         self.trie_root = self._build_trie()
         self.byte_to_id: dict[bytes, int] = {v: k for k, v in vocab.items()}
         self.merge_prios = {merge: i for i, merge in enumerate(self.merges)}
+        if self.special_tokens:
+            sorted_special = sorted(self.special_tokens, key=len, reverse=True)
+            self._special_pattern = "(" + "|".join(re.escape(st) for st in sorted_special) + ")"
+        
+
 
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
@@ -308,13 +313,9 @@ class Tokenizer:
         pretokenizer = GPT2_PAT
         
         if self.special_tokens:
-            sorted_special = sorted(self.special_tokens, key=len, reverse=True)
-            pattern = "(" + "|".join(re.escape(st) for st in sorted_special) + ")"
-            parts = re.split(pattern, text)
+            parts = re.split(self._special_pattern, text)
         else:
             parts = [text]
-
-        
 
         for part in parts:
             if part in self.special_tokens:
