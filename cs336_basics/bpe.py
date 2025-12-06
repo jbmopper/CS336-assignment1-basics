@@ -112,7 +112,10 @@ def load_bpe(input_path: str | os.PathLike) -> tuple[dict[int, bytes], list[tupl
     merges = []
     with open(merges_path, "r", encoding="latin-1") as f:
         for line in f:
-            a, b = line.rstrip('\n').split('\t')
+            line = line.rstrip('\n')
+            if not line:
+                continue
+            a, b = line.split('\t')
             merges.append((a.encode('latin-1'), b.encode('latin-1')))
     
     return vocab, merges
