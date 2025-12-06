@@ -14,7 +14,7 @@ from cs336_basics.implementations import (
     TransformerBlock, TransformerLM, crossentropy,
     get_batch, gradient_clipping, save_checkpoint, load_checkpoint
 )
-from cs336_basics.bpe import train_bpe, Tokenizer
+from cs336_basics.bpe import train_bpe, Tokenizer, save_bpe, load_bpe
 
 __all__ = [
     # Neural network modules
