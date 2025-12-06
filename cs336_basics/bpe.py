@@ -84,39 +84,31 @@ def save_bpe(output_path: str | os.PathLike,
     os.makedirs(output_path, exist_ok=True)
     
     vocab_path = os.path.join(output_path, "vocab.json")
-    merges_path = os.path.join(output_path, "merges.txt")
+    merges_path = os.path.join(output_path, "merges.pkl")
     
     # Save vocab
     vocab_str = {str(k): v.decode('latin-1') for k, v in vocab.items()}
     with open(vocab_path, "w", encoding="latin-1") as f:
         json.dump(vocab_str, f, ensure_ascii=False)
     
-    # Save merges
-    with open(merges_path, "w", encoding="latin-1") as f:
-        for a, b in merges:
-            f.write(f"{a.decode('latin-1')}\t{b.decode('latin-1')}\n")
+    # Save merges as pickle (handles arbitrary bytes safely)
+    with open(merges_path, "wb") as f:
+        pickle.dump(merges, f)
 
 def load_bpe(input_path: str | os.PathLike) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """Load vocab and merges from directory (matching save_bpe format)."""
-    import json
     
     vocab_path = os.path.join(input_path, "vocab.json")
-    merges_path = os.path.join(input_path, "merges.txt")
+    merges_path = os.path.join(input_path, "merges.pkl")
     
     # Load vocab - latin-1 encoded
     with open(vocab_path, "r", encoding="latin-1") as f:
         vocab_str = json.load(f)
     vocab = {int(k): v.encode('latin-1') for k, v in vocab_str.items()}
     
-    # Load merges - tab-separated, latin-1 encoded
-    merges = []
-    with open(merges_path, "r", encoding="latin-1") as f:
-        for line in f:
-            line = line.rstrip('\n')
-            if not line or '\t' not in line:
-                continue
-            a, b = line.split('\t', maxsplit=1)
-            merges.append((a.encode('latin-1'), b.encode('latin-1')))
+    # Load merges from pickle
+    with open(merges_path, "rb") as f:
+        merges = pickle.load(f)
     
     return vocab, merges
 
