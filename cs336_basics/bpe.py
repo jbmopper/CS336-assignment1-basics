@@ -38,6 +38,7 @@ def train_bpe(
 
     merges: list[tuple[bytes, bytes]] = []
     pretoken_counts: Counter[str] = Counter()
+    pair_pretoken_map: dict[tuple[bytes, bytes], list[str]] = {}
     paircount: Counter[tuple[bytes, bytes]] = Counter()
 
     with open(input_path, "rb") as f:
@@ -56,16 +57,19 @@ def train_bpe(
         for pretoken in pretoken_counts.keys()
     }
 
-    # First pass - count initial pairs
+    # First pass - count initial pairs and construct pretoken index
     for pretoken, b in tokenized.items():
         for i in range(len(b) - 1):
             paircount[(b[i], b[i + 1])] += pretoken_counts[pretoken]
+            if (b[i], b[i+1]) not in pair_pretoken_map:
+                pair_pretoken_map[(b[i], b[i+1])] = []
+            pair_pretoken_map[(b[i], b[i+1])].append(pretoken)
 
     while len(vocab) < vocab_size:
         merge = max(paircount.items(), key=lambda kv: (kv[1], kv[0]))[0]
         merges.append(merge)
         vocab[len(vocab)] = merge[0] + merge[1]
-        _update_tokens(merge, tokenized, paircount, pretoken_counts)
+        _update_tokens(merge, tokenized, paircount, pretoken_counts, pair_pretoken_map)
 
     return vocab, merges
 
@@ -142,13 +146,17 @@ def _update_tokens(
     merge: tuple[bytes, bytes],
     tokenized: dict[str, list[bytes]],
     paircount: Counter,
-    pretoken_counts: Counter
+    pretoken_counts: Counter,
+    pair_pretoken_map: dict[tuple[bytes, bytes], list[str]]
 ) -> None:
     """Update token lists and pair counts after a merge."""
     merged = merge[0] + merge[1]
     paircount[merge] = 0
     
-    for pretoken, b in tokenized.items():
+    affected_tokenized = {k: tokenized[k] for k in pair_pretoken_map[merge] if k in tokenized}
+
+    # for pretoken, b in tokenized.items():
+    for pretoken, b in affected_tokenized.items():
         count = pretoken_counts[pretoken]
         
         # Scan and identify merges
@@ -181,11 +189,17 @@ def _update_tokens(
             if i > 0:
                 paircount[(b[i - 1], b[i])] -= count
                 paircount[(b[i - 1], merged)] += count
+                if (b[i - 1], merged) not in pair_pretoken_map:
+                    pair_pretoken_map[(b[i-1], merged)] = []
+                pair_pretoken_map[(b[i-1], merged)].append(pretoken)
 
         for i in merge_ends:
             if i < len(b) - 1:
                 paircount[(b[i], b[i + 1])] -= count
                 paircount[(merged, b[i + 1])] += count
+                if (merged, b[i + 1]) not in pair_pretoken_map:
+                    pair_pretoken_map[(merged, b[i+1])] = []
+                pair_pretoken_map[(merged, b[i+1])].append(pretoken)
 
         paircount[(merge[1], merge[0])] -= count * (len(internal_merges) // 2)
         paircount[(merged, merged)] += count * (len(internal_merges) // 2)
