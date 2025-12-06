@@ -9,6 +9,7 @@ from collections.abc import Iterable, Iterator
 import json
 import pickle
 from dataclasses import dataclass, field
+from tqdm import tqdm
 
 __all__ = ['train_bpe', 'Tokenizer', 'save_bpe', 'load_bpe']
 
@@ -65,11 +66,14 @@ def train_bpe(
                 pair_pretoken_map[(b[i], b[i+1])] = []
             pair_pretoken_map[(b[i], b[i+1])].append(pretoken)
 
-    while len(vocab) < vocab_size:
-        merge = max(paircount.items(), key=lambda kv: (kv[1], kv[0]))[0]
-        merges.append(merge)
-        vocab[len(vocab)] = merge[0] + merge[1]
-        _update_tokens(merge, tokenized, paircount, pretoken_counts, pair_pretoken_map)
+    num_merges = vocab_size - len(vocab)
+    with tqdm(total=num_merges, desc="BPE merges") as pbar:
+        while len(vocab) < vocab_size:
+            merge = max(paircount.items(), key=lambda kv: (kv[1], kv[0]))[0]
+            merges.append(merge)
+            vocab[len(vocab)] = merge[0] + merge[1]
+            _update_tokens(merge, tokenized, paircount, pretoken_counts, pair_pretoken_map)
+            pbar.update(1)
 
     return vocab, merges
 
@@ -203,6 +207,11 @@ def _update_tokens(
 
         paircount[(merge[1], merge[0])] -= count * (len(internal_merges) // 2)
         paircount[(merged, merged)] += count * (len(internal_merges) // 2)
+        if len(internal_merges) > 0:
+            if (merged, merged) not in pair_pretoken_map:
+                pair_pretoken_map[(merged, merged)] = []
+            pair_pretoken_map[(merged, merged)].append(pretoken)
+
 
         tokenized[pretoken] = updated_tokens
 
