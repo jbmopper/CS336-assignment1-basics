@@ -109,7 +109,7 @@ def scaled_dot_product_attention(
 ) -> Float[Tensor, "... queries d_v"]:
     """Scaled dot-product attention."""
     d_k = Q.size(-1)
-    scaled_product = (Q @ K.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k, dtype=Q.dtype))
+    scaled_product = (Q @ K.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k, dtype=Q.dtype, device=Q.device))
     if mask is not None:
         scaled_product = scaled_product.masked_fill_(~mask, float('-inf'))
     output = softmax(scaled_product, -1) @ V
@@ -198,7 +198,7 @@ class Multihead(nn.Module):
         K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=head_dim)
         V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=head_dim)
 
-        mask = torch.ones((Q.size(-2), Q.size(-2)), dtype=bool)
+        mask = torch.ones((Q.size(-2), Q.size(-2)), dtype=bool, device=Q.device)
         mask = torch.tril(mask)
 
         sdpa = scaled_dot_product_attention(Q, K, V, mask)
@@ -249,7 +249,7 @@ class MultiheadRope(nn.Module):
         Q = self.rope.forward(Q, token_positions)
         K = self.rope.forward(K, token_positions)
 
-        mask = torch.ones((Q.size(-2), Q.size(-2)), dtype=bool)
+        mask = torch.ones((Q.size(-2), Q.size(-2)), dtype=bool, device=Q.device)
         mask = torch.tril(mask)
 
         sdpa = scaled_dot_product_attention(Q, K, V, mask)
