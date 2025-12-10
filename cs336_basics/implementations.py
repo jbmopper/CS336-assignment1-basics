@@ -179,4 +179,5 @@ def load_model(src) -> tuple[dict, torch.nn.Module]:
         config["rope_theta"]
     ).to(config["device"]) # need better device info?  e.g. cuda:0?
 
+    model.load_state_dict(src["model"])
     return config, model
