@@ -54,6 +54,7 @@ config = dict(
     # num_layers = 6,
     # d_ff = 2048,
     # context_length = 512,
+    # rope_theta=10000
 
     # Assignment settings, ~17M parameters
     d_model = 512,
@@ -61,6 +62,8 @@ config = dict(
     num_layers = 4,
     d_ff = 1344,
     context_length = 256,
+    rope_theta = 10000,
+
 
     # optimizer (adamw)
     optimizer_use_defaults = True,
@@ -85,7 +88,7 @@ config = dict(
     learning_schedule = "course cosine anneal w/warmup",
     dataset = "Tinystories",
     loss_func = "cross-entropy",
-    run_name = "two",
+    run_name = "two (with the profiler running)",
 
 
     # training loop
@@ -392,7 +395,7 @@ def train(config, tokens, valid_tokens):
 
         #    pbar.update(1)
         
-        run.finish() 
+    run.finish() 
 
 
 def main():
