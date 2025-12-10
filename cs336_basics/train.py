@@ -61,8 +61,10 @@ config = dict(
     num_heads = 16,
     num_layers = 4,
     d_ff = 1344,
-    context_length = 256,
+    # context_length = 256,
+    context_length = 512,
     rope_theta = 10000,
+    batch_size = 32, # "Memory scales with batch_size × context_length × d_model"
 
 
     # optimizer (adamw)
@@ -88,19 +90,18 @@ config = dict(
     learning_schedule = "course cosine anneal w/warmup",
     dataset = "Tinystories",
     loss_func = "cross-entropy",
-    run_name = "two (with the profiler running)",
+    run_name = "limited run for profiling, larger context",
 
 
     # training loop
-    num_iters = 1000,
-    batch_size = 32, # "Memory scales with batch_size × context_length × d_model"
+    num_iters = 25,
     checkpoint_dir = "../checkpoints/",
 
     # other parameters
     rand_seed = 0,
     gradient_clip = 1.0, # will set in training loop
     save_every = 200,
-    eval_every = 20,
+    eval_every = 5,
 
 )
 
@@ -191,6 +192,7 @@ def train(config, tokens, valid_tokens):
         config["context_length"],
         config["rope_theta"]
     ).to(config["device"]) # need better device info?  e.g. cuda:0?
+
 
     # Optimizer
     if config["optimizer_use_defaults"]:

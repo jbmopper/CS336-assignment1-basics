@@ -12,7 +12,8 @@ from cs336_basics.nn import (
 from cs336_basics.optimizer import AdamW, get_lr_cosine_schedule
 from cs336_basics.implementations import (
     TransformerBlock, TransformerLM, crossentropy,
-    get_batch, gradient_clipping, save_checkpoint, load_checkpoint
+    get_batch, gradient_clipping, save_checkpoint, load_checkpoint,
+    load_model
 )
 from cs336_basics.bpe import train_bpe, Tokenizer, save_bpe, load_bpe
 
@@ -25,7 +26,7 @@ __all__ = [
     'TransformerBlock', 'TransformerLM', 'crossentropy',
     # Training utilities
     'get_batch', 'gradient_clipping', 'save_checkpoint', 'load_checkpoint',
-    'AdamW', 'get_lr_cosine_schedule',
+    'AdamW', 'get_lr_cosine_schedule', 'load_model',
     # Tokenizer
     'train_bpe', 'Tokenizer', 'save_bpe', 'load_bpe'
 ]

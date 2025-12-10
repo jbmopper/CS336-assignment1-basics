@@ -139,20 +139,44 @@ def save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     iteration: int,
-    out
+    out,    
+    config: dict | None = None,
 ) -> None:
     """Save model, optimizer state, and iteration to a checkpoint file."""
-    obj = dict(model=model.state_dict(), optimizer=optimizer.state_dict(), iteration=iteration)
+    obj = dict(
+        model=model.state_dict(), 
+        optimizer=optimizer.state_dict(), 
+        iteration=iteration
+    )
+    if config is not None:
+        obj["config"] = config
     torch.save(obj, out)
 
 
 def load_checkpoint(
     src,
     model: torch.nn.Module,
-    optimizer: torch.optim.Optimizer
+    optimizer: torch.optim.Optimizer,
 ) -> int:
     """Load model and optimizer state from a checkpoint file. Returns iteration."""
     obj = torch.load(src)
     model.load_state_dict(obj["model"])
     optimizer.load_state_dict(obj["optimizer"])
     return obj["iteration"]
+
+def load_model(src) -> tuple[dict, torch.nn.Module]:
+    config = src["config"]
+    if config["device"] == None:
+        config["device"] == "cpu"
+
+    model =     model = TransformerLM(
+        config["vocab_size"],
+        config["d_model"],
+        config["num_heads"],
+        config["num_layers"],
+        config["d_ff"],
+        config["context_length"],
+        config["rope_theta"]
+    ).to(config["device"]) # need better device info?  e.g. cuda:0?
+
+    return config, model
