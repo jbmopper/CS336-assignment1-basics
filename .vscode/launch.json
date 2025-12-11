@@ -6,14 +6,14 @@
             "type": "python",
             "request": "launch",
             "module": "cs336_basics.decode",
-            "cwd": "/Users/juliusmopper/Dev/stanford-cs336/assignment1-basics/cs336_basics",
+            "cwd": "/Users/juliusmopper/Dev/CS336-assignment1-basics/cs336_basics",
             "args": [
-                "/Users/juliusmopper/Dev/stanford-cs336/assignment1-basics/checkpoints/_20251211_0148/latest.pt"
+                "/Users/juliusmopper/Dev/CS336-assignment1-basics/checkpoints/_20251211_0148/latest.pt"
             ],
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {
-                "PYTHONPATH": "/Users/juliusmopper/Dev/stanford-cs336/assignment1-basics/"
+                "PYTHONPATH": "/Users/juliusmopper/Dev/CS336-assignment1-basics/"
             }
         }
     ]

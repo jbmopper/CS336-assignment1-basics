@@ -102,14 +102,13 @@ def main():
             sorted_probs, sorted_idx = torch.sort(probs, dim=-1, descending=True)
             cdf = torch.cumsum(sorted_probs, dim=-1)
             top = cdf <= args.top_p_threshold
-            next_elements = top.sum(dim=-1).unsqueeze(-2)
-            top[next_elements] = True 
-            # ok, so we have le top bool mask
-            # and we want... 
-            sorted_probs.masked_fill_(~top, 0.)
+            next_elements = top.sum(dim=-1) # ditch the unsqueeze?
+            top[0, next_elements[0]] = True # benefits of using the last column
+            # sorted_probs = sorted_probs.masked_fill_(~top, 0.).squeeze(0) # bot says not to fight the batch dim
+            sorted_probs = sorted_probs.masked_fill_(~top, 0.)
             selected = torch.multinomial(sorted_probs, 1) # indices in sorted_probs, which we want to then index via sorted_idx into vocab
             # but vocab is dict[int, bytes]... the int is the index!
-            token = [vocab[sorted_idx[selected].flatten()]]
+            token = sorted_idx[:, selected].flatten().tolist()
             output = tokenizer.decode(token)
             print(output)
             
