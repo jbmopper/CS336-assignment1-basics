@@ -88,15 +88,17 @@ def main():
                 break
 
             if output is not None:
-                sub = output + input
+                sub = output + sub
 
             inputs = tokenizer.encode(sub) 
             # turn list into a [1 len(inputs)] tensor of input
             inputs = torch.tensor(inputs, device=config['device'], dtype=torch.long)
-            inputs.unsqueeze(0)
+            inputs = inputs.unsqueeze(0)
             logits = model.forward(inputs) # Float[Tensor, "batch seq vocab"]... seq?
-            logits.divide_(args.temperature)
-            probs = softmax(logits, -1)
+            # comes back [1, seq_len, vocab_size]... just want the last column
+            pred_logit = logits[:, -1, :]
+            pred_logit.divide_(args.temperature)
+            probs = softmax(pred_logit, -1)
             sorted_probs, sorted_idx = torch.sort(probs, dim=-1, descending=True)
             cdf = torch.cumsum(sorted_probs, dim=-1)
             top = cdf <= args.top_p_threshold
@@ -107,8 +109,8 @@ def main():
             sorted_probs.masked_fill_(~top, 0.)
             selected = torch.multinomial(sorted_probs, 1) # indices in sorted_probs, which we want to then index via sorted_idx into vocab
             # but vocab is dict[int, bytes]... the int is the index!
-            tokens = selected.flatten().tolist()
-            output = tokenizer.decode(tokens)
+            token = [vocab[sorted_idx[selected].flatten()]]
+            output = tokenizer.decode(token)
             print(output)
             
 

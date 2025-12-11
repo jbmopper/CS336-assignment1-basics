@@ -1,7 +1,20 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
-    "configurations": []
+    "configurations": [
+        {
+            "name": "Python: Decode (module)",
+            "type": "python",
+            "request": "launch",
+            "module": "cs336_basics.decode",
+            "cwd": "/Users/juliusmopper/Dev/stanford-cs336/assignment1-basics/cs336_basics",
+            "args": [
+                "/Users/juliusmopper/Dev/stanford-cs336/assignment1-basics/checkpoints/_20251211_0148/latest.pt"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "/Users/juliusmopper/Dev/stanford-cs336/assignment1-basics/"
+            }
+        }
+    ]
 }
