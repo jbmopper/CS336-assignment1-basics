@@ -62,9 +62,9 @@ config = dict(
     num_layers = 4,
     d_ff = 1344,
     # context_length = 256,
-    context_length = 512,
+    context_length = 256,
     rope_theta = 10000,
-    batch_size = 32, # "Memory scales with batch_size × context_length × d_model"
+    batch_size = 32, # "Memory scales with batch_size × context_length^2 × d_model"
 
 
     # optimizer (adamw)
@@ -90,18 +90,18 @@ config = dict(
     learning_schedule = "course cosine anneal w/warmup",
     dataset = "Tinystories",
     loss_func = "cross-entropy",
-    run_name = "limited run for profiling, larger context",
+    run_name = "creating loadable checkpoint for inference",
 
 
     # training loop
-    num_iters = 25,
+    num_iters = 1000,
     checkpoint_dir = "../checkpoints/",
 
     # other parameters
     rand_seed = 0,
     gradient_clip = 1.0, # will set in training loop
     save_every = 200,
-    eval_every = 5,
+    eval_every = 20,
 
 )
 
@@ -231,91 +231,91 @@ def train(config, tokens, valid_tokens):
 
         if i % config["eval_every"] == 0:
 
-            with torch.mps.profiler.profile(mode="interval,event", wait_until_completed=False): 
-            # train
-                # get batch
-                start = time.perf_counter()
-                inputs, labels = get_batch(
-                    tokens, 
-                    config["batch_size"], 
-                    config["context_length"],
-                    config["device"]
-                )
-                elapsed = time.perf_counter() - start
-                wandb.log({"Batch getting time": elapsed}, step=i)
+            # with torch.mps.profiler.profile(mode="interval,event", wait_until_completed=False): 
+        # train
+            # get batch
+            start = time.perf_counter()
+            inputs, labels = get_batch(
+                tokens, 
+                config["batch_size"], 
+                config["context_length"],
+                config["device"]
+            )
+            elapsed = time.perf_counter() - start
+            wandb.log({"Batch getting time": elapsed}, step=i)
 
-                # forward pass
-                start = time.perf_counter() 
-                model.train()
-                out_logits = model.forward(inputs) 
-                elapsed = time.perf_counter() - start
-                wandb.log({"Forward pass time": elapsed}, step=i)
+            # forward pass
+            start = time.perf_counter() 
+            model.train()
+            out_logits = model.forward(inputs) 
+            elapsed = time.perf_counter() - start
+            wandb.log({"Forward pass time": elapsed}, step=i)
 
-                # loss caclulation
-                start = time.perf_counter() 
-                loss = crossentropy(out_logits, labels)
-                elapsed = time.perf_counter() - start 
-                perplexity = math.exp(loss)
-                wandb.log({"Loss calc time": elapsed,
-                    "Loss": loss, "Perplexity": perplexity}, step=i)
+            # loss caclulation
+            start = time.perf_counter() 
+            loss = crossentropy(out_logits, labels)
+            elapsed = time.perf_counter() - start 
+            perplexity = math.exp(loss)
+            wandb.log({"Loss calc time": elapsed,
+                "Loss": loss, "Perplexity": perplexity}, step=i)
 
-                # backward pass
-                start = time.perf_counter()  
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                elapsed = time.perf_counter() - start 
-                wandb.log({"Backwards pass time": elapsed}, step=i)
+            # backward pass
+            start = time.perf_counter()  
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            elapsed = time.perf_counter() - start 
+            wandb.log({"Backwards pass time": elapsed}, step=i)
 
-                # gradient clipping
-                start = time.perf_counter() 
-                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float('inf'))
-                # print(f"Grad norm: {grad_norm:.2f}")
-                elapsed = time.perf_counter() - start
-                wandb.log({"Grad calc time": elapsed, "Grad norm": grad_norm}, step=i)
+            # gradient clipping
+            start = time.perf_counter() 
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float('inf'))
+            # print(f"Grad norm: {grad_norm:.2f}")
+            elapsed = time.perf_counter() - start
+            wandb.log({"Grad calc time": elapsed, "Grad norm": grad_norm}, step=i)
 
-                start = time.perf_counter() 
-                gradient_clipping(model.parameters(), config["gradient_clip"])
-                elapsed = time.perf_counter() - start
-                wandb.log({"Grad clip time": elapsed}, step=i) 
+            start = time.perf_counter() 
+            gradient_clipping(model.parameters(), config["gradient_clip"])
+            elapsed = time.perf_counter() - start
+            wandb.log({"Grad clip time": elapsed}, step=i) 
 
-                # optimize
-                lr = get_lr_cosine_schedule(i,
-                    config["lr_max"],
-                    config["lr_min"],
-                    config["warmup_iters"],
-                    config["cos_iters"]
-                )
-                wandb.log({"LR": lr}, step=i)
+            # optimize
+            lr = get_lr_cosine_schedule(i,
+                config["lr_max"],
+                config["lr_min"],
+                config["warmup_iters"],
+                config["cos_iters"]
+            )
+            wandb.log({"LR": lr}, step=i)
 
-                for param_group in optimizer.param_groups:
-                    param_group["lr"] = lr
-                
-                start = time.perf_counter()  
-                optimizer.step() 
-                elapsed = time.perf_counter() - start
-                wandb.log({"Optimizer step time": elapsed}, step=i)
-                
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = lr
+            
+            start = time.perf_counter()  
+            optimizer.step() 
+            elapsed = time.perf_counter() - start
+            wandb.log({"Optimizer step time": elapsed}, step=i)
+            
 
-                # most recent checkpoint
-                start = time.perf_counter() 
-                save_checkpoint(model, optimizer, i, f"{config['checkpoint_dir']}/latest.pt")
-                elapsed = time.perf_counter() - start
-                wandb.log({"Checkpoint save time": elapsed}, step=i) # lol 
+            # most recent checkpoint
+            start = time.perf_counter() 
+            save_checkpoint(model, optimizer, i, f"{config['checkpoint_dir']}/latest.pt", config)
+            elapsed = time.perf_counter() - start
+            wandb.log({"Checkpoint save time": elapsed}, step=i) # lol 
 
-            # eval
-                model.eval() 
-                eval_inputs, eval_labels = get_batch(
-                    valid_tokens,
-                    config["batch_size"], 
-                    config["context_length"],
-                    config["device"]
-                )
-                with torch.no_grad():
-                    eval_logits = model.forward(eval_inputs)
-                    eval_loss = crossentropy(eval_logits, eval_labels)
-                    eval_perplexity = math.exp(eval_loss)
-                
-                wandb.log({"Eval loss": eval_loss, "Eval perplexity": eval_perplexity}, step=i)
+        # eval
+            model.eval() 
+            eval_inputs, eval_labels = get_batch(
+                valid_tokens,
+                config["batch_size"], 
+                config["context_length"],
+                config["device"]
+            )
+            with torch.no_grad():
+                eval_logits = model.forward(eval_inputs)
+                eval_loss = crossentropy(eval_logits, eval_labels)
+                eval_perplexity = math.exp(eval_loss)
+            
+            wandb.log({"Eval loss": eval_loss, "Eval perplexity": eval_perplexity}, step=i)
 
         else:
 

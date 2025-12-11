@@ -164,12 +164,12 @@ def load_checkpoint(
     optimizer.load_state_dict(obj["optimizer"])
     return obj["iteration"]
 
-def load_model(src) -> tuple[dict, torch.nn.Module]:
+def load_model(src) -> tuple[dict, TransformerLM]:
     config = src["config"]
     if config["device"] == None:
         config["device"] == "cpu"
 
-    model =     model = TransformerLM(
+    model =  TransformerLM(
         config["vocab_size"],
         config["d_model"],
         config["num_heads"],
@@ -177,7 +177,7 @@ def load_model(src) -> tuple[dict, torch.nn.Module]:
         config["d_ff"],
         config["context_length"],
         config["rope_theta"]
-    ).to(config["device"]) # need better device info?  e.g. cuda:0?
+    ).to(config["device"]) # does this happen here?
 
     model.load_state_dict(src["model"])
     return config, model
