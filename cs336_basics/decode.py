@@ -106,9 +106,11 @@ def main():
             top[0, next_elements[0]] = True # benefits of using the last column
             # sorted_probs = sorted_probs.masked_fill_(~top, 0.).squeeze(0) # bot says not to fight the batch dim
             sorted_probs = sorted_probs.masked_fill_(~top, 0.)
+            prob_sum = sorted_probs.sum(dim=-1, keepdim=True)
+            sorted_probs = sorted_probs / prob_sum.clamp(min=1e-8)
             selected = torch.multinomial(sorted_probs, 1) # indices in sorted_probs, which we want to then index via sorted_idx into vocab
             # but vocab is dict[int, bytes]... the int is the index!
-            token = sorted_idx[:, selected].flatten().tolist()
+            token = sorted_idx.gather(1, selected).flatten().tolist()
             output = tokenizer.decode(token)
             print(output)
             
