@@ -68,7 +68,7 @@ def main():
     p.add_argument("ckpt", help="Path to checkpoint to load")
     p.add_argument("--max-new-tokens", type=int, default=128)
     p.add_argument("--temperature", type=float, default=1.0)
-    p.add_argument("--top-p-threshold", type=float, default=0.01)
+    p.add_argument("--top-p-threshold", type=float, default=0.9)
     args = p.parse_args()
 
     config, model = load_model(args.ckpt)
@@ -81,22 +81,38 @@ def main():
     quits = ["!q"]
     model.eval()
     with torch.inference_mode():
+        output = None
         while True:
             sub = input("T$ ").strip()
             if sub in quits:
                 break
-                
+
+            if output is not None:
+                sub = output + input
+
             inputs = tokenizer.encode(sub) 
             # turn list into a [1 len(inputs)] tensor of input
-            inputs = torch.Tensor(inputs, device=config['device'])
+            inputs = torch.tensor(inputs, device=config['device'], dtype=torch.long)
             inputs.unsqueeze(0)
             logits = model.forward(inputs) # Float[Tensor, "batch seq vocab"]... seq?
             logits.divide_(args.temperature)
-            probs = softmax(logits)
+            probs = softmax(logits, -1)
             sorted_probs, sorted_idx = torch.sort(probs, dim=-1, descending=True)
             cdf = torch.cumsum(sorted_probs, dim=-1)
             top = cdf <= args.top_p_threshold
+            next_elements = top.sum(dim=-1).unsqueeze(-2)
+            top[next_elements] = True 
+            # ok, so we have le top bool mask
+            # and we want... 
+            sorted_probs.masked_fill_(~top, 0.)
+            selected = torch.multinomial(sorted_probs, 1) # indices in sorted_probs, which we want to then index via sorted_idx into vocab
+            # but vocab is dict[int, bytes]... the int is the index!
+            tokens = selected.flatten().tolist()
+            output = tokenizer.decode(tokens)
+            print(output)
             
+
+
             
 
 

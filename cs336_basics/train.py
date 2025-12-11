@@ -384,7 +384,7 @@ def train(config, tokens, valid_tokens):
 
             # most recent checkpoint
             start = time.perf_counter() 
-            save_checkpoint(model, optimizer, i, f"{config['checkpoint_dir']}/latest.pt")
+            save_checkpoint(model, optimizer, i, f"{config['checkpoint_dir']}/latest.pt", config)
             elapsed = time.perf_counter() - start
             wandb.log({"Checkpoint save time": elapsed}, step=i) # lol
 
@@ -393,7 +393,7 @@ def train(config, tokens, valid_tokens):
 
         # archive checkpoint
         if i % config["save_every"] == 0: # checkpoint every 4 iters?  
-            save_checkpoint(model, optimizer, i, f"{config['checkpoint_dir']}/checkpoint_{i}.pt")
+            save_checkpoint(model, optimizer, i, f"{config['checkpoint_dir']}/checkpoint_{i}.pt", config)
 
         #    pbar.update(1)
         

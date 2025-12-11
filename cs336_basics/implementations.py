@@ -165,9 +165,10 @@ def load_checkpoint(
     return obj["iteration"]
 
 def load_model(src) -> tuple[dict, TransformerLM]:
-    config = src["config"]
+    obj = torch.load(src)
+    config = obj["config"]
     if config["device"] == None:
-        config["device"] == "cpu"
+        config["device"] = "cpu"
 
     model =  TransformerLM(
         config["vocab_size"],
@@ -179,5 +180,5 @@ def load_model(src) -> tuple[dict, TransformerLM]:
         config["rope_theta"]
     ).to(config["device"]) # does this happen here?
 
-    model.load_state_dict(src["model"])
+    model.load_state_dict(obj["model"])
     return config, model
