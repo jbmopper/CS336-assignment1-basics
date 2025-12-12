@@ -20,6 +20,7 @@ import numpy as np
 import argparse
 import prompt_toolkit
 
+import signal, sys
 
 
 def setDeviceAndSeeds(config):
@@ -59,7 +60,9 @@ def setup_tokenizer(config) -> Tokenizer:
 # check to see if endoftext has happened and terminate when it happens
 # also have a manual advance mode?
 
-
+def handle_sigint(signum, frame):
+    print("\nexiting")
+    sys.exit(0)
 
 
 def main():
@@ -83,14 +86,16 @@ def main():
     with torch.inference_mode():
         output = None
         while True:
-            sub = input("T$ ").strip()
-            if sub in quits:
-                break
+            signal.signal(signal.SIGINT, handle_sigint)
 
-            if output is not None:
-                sub = output + sub
+            if output is None or output == "<|endoftext|>":
+                sub = input("T$ ").strip()
+                if sub in quits:
+                    break
+            else:
+                sub = output
 
-            inputs = tokenizer.encode(sub) 
+            inputs = tokenizer.encode(sub)[: args.max_new_tokens] # probably not where they intended
             # turn list into a [1 len(inputs)] tensor of input
             inputs = torch.tensor(inputs, device=config['device'], dtype=torch.long)
             inputs = inputs.unsqueeze(0)
@@ -111,7 +116,10 @@ def main():
             selected = torch.multinomial(sorted_probs, 1) # indices in sorted_probs, which we want to then index via sorted_idx into vocab
             # but vocab is dict[int, bytes]... the int is the index!
             token = sorted_idx.gather(1, selected).flatten().tolist()
-            output = tokenizer.decode(token)
+            new_output = tokenizer.decode(token)
+            if output is not None:
+                output = output + new_output
+            else: output = new_output
             print(output)
             
 
