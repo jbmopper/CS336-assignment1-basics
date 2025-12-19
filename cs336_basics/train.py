@@ -23,7 +23,7 @@ import torch
 import time
 
 from datetime import datetime
-from torch.profiler import profile, ProfilerActivity
+from contextlib import contextmanager
 
 # Setup (paths, device, config)
 
@@ -56,15 +56,20 @@ config = dict(
     # context_length = 512,
     # rope_theta=10000
 
-    # Assignment settings, ~17M parameters
-    d_model = 512,
-    num_heads = 16,
-    num_layers = 4,
-    d_ff = 1344,
-    # context_length = 256,
-    context_length = 256,
-    rope_theta = 10000,
+
+
     batch_size = 32, # "Memory scales with batch_size × context_length^2 × d_model"
+    model_settings = dict(
+        # Assignment settings, ~17M parameters
+        d_model = 512,
+        num_heads = 16,
+        num_layers = 4,
+        d_ff = 1344,
+        # context_length = 256,
+        context_length = 256,
+        rope_theta = 10000,
+    ),
+    # will add vocab size...
 
 
     # optimizer (adamw)
@@ -90,11 +95,11 @@ config = dict(
     learning_schedule = "course cosine anneal w/warmup",
     dataset = "Tinystories",
     loss_func = "cross-entropy",
-    run_name = "creating loadable checkpoint for inference",
+    run_name = "refactor",
 
 
     # training loop
-    num_iters = 1000,
+    num_iters = 10,
     checkpoint_dir = "../checkpoints/",
 
     # other parameters
@@ -104,6 +109,7 @@ config = dict(
     eval_every = 20,
 
 )
+config["model_settings"]["vocab_size"] = config["vocab_size"]
 
 def setDeviceAndSeeds(config):
     """Checks for devices, adds to config, and sets RNG seed values."""
@@ -180,231 +186,209 @@ def getTokens(config) -> tuple[np.array, np.array]:
     
     return tokens, valid_tokens
 
-def train(config, tokens, valid_tokens):
-    """Set up model, optimizer, and run training loop"""
-    # Model
-    model = TransformerLM(
-        config["vocab_size"],
-        config["d_model"],
-        config["num_heads"],
-        config["num_layers"],
-        config["d_ff"],
-        config["context_length"],
-        config["rope_theta"]
-    ).to(config["device"]) # need better device info?  e.g. cuda:0?
+@contextmanager
+def timer(name, log_dict=None):
+    """Context manager for timing code blocks.
+    
+    Usage:
+        with timer("Forward pass", timings):
+            out_logits = model.forward(inputs)
+        # timings["Forward pass"] now contains the elapsed time
+    """
+    start = time.perf_counter()
+    yield
+    elapsed = time.perf_counter() - start
+    if log_dict is not None:
+        log_dict[name] = elapsed
 
-
-    # Optimizer
-    if config["optimizer_use_defaults"]:
-        optimizer = AdamW(model.parameters()) # using defaults
-    else:
-        # TODO: optimizer call with parameters
-        pass
-
-    # Wandb 
-    wandb.login()
-    run = wandb.init(
-        entity = config["wandb_entity"],
-        project = config["log_project"],
-        name = config["run_name"],
-        config = config
-    ) #...
-
-    # checkpoints
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    config["checkpoint_dir"] = config["checkpoint_dir"] + "_" + timestamp
-    os.makedirs(config["checkpoint_dir"], exist_ok=True)
-
-
-   # Training loop
-
-    # with tqdm(total=config["num_iters"], desc="Training Progress") as pbar:
-    #    for i in range(config["num_iters"]):
-    for i in tqdm(range(config["num_iters"]), desc="Training Progress"):
-
-        # set device
-        if config["device"] == "mps":
-            torch.mps.synchronize()
-        elif config["device"] == "cuda":
-            torch.cuda.synchronize()
-
-
-        if i % config["eval_every"] == 0:
-
-            # with torch.mps.profiler.profile(mode="interval,event", wait_until_completed=False): 
-        # train
-            # get batch
-            start = time.perf_counter()
-            inputs, labels = get_batch(
-                tokens, 
-                config["batch_size"], 
-                config["context_length"],
-                config["device"]
-            )
-            elapsed = time.perf_counter() - start
-            wandb.log({"Batch getting time": elapsed}, step=i)
-
-            # forward pass
-            start = time.perf_counter() 
-            model.train()
-            out_logits = model.forward(inputs) 
-            elapsed = time.perf_counter() - start
-            wandb.log({"Forward pass time": elapsed}, step=i)
-
-            # loss caclulation
-            start = time.perf_counter() 
-            loss = crossentropy(out_logits, labels)
-            elapsed = time.perf_counter() - start 
-            perplexity = math.exp(loss)
-            wandb.log({"Loss calc time": elapsed,
-                "Loss": loss, "Perplexity": perplexity}, step=i)
-
-            # backward pass
-            start = time.perf_counter()  
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            elapsed = time.perf_counter() - start 
-            wandb.log({"Backwards pass time": elapsed}, step=i)
-
-            # gradient clipping
-            start = time.perf_counter() 
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float('inf'))
-            # print(f"Grad norm: {grad_norm:.2f}")
-            elapsed = time.perf_counter() - start
-            wandb.log({"Grad calc time": elapsed, "Grad norm": grad_norm}, step=i)
-
-            start = time.perf_counter() 
-            gradient_clipping(model.parameters(), config["gradient_clip"])
-            elapsed = time.perf_counter() - start
-            wandb.log({"Grad clip time": elapsed}, step=i) 
-
-            # optimize
-            lr = get_lr_cosine_schedule(i,
-                config["lr_max"],
-                config["lr_min"],
-                config["warmup_iters"],
-                config["cos_iters"]
-            )
-            wandb.log({"LR": lr}, step=i)
-
-            for param_group in optimizer.param_groups:
-                param_group["lr"] = lr
-            
-            start = time.perf_counter()  
-            optimizer.step() 
-            elapsed = time.perf_counter() - start
-            wandb.log({"Optimizer step time": elapsed}, step=i)
-            
-
-            # most recent checkpoint
-            start = time.perf_counter() 
-            save_checkpoint(model, optimizer, i, f"{config['checkpoint_dir']}/latest.pt", config)
-            elapsed = time.perf_counter() - start
-            wandb.log({"Checkpoint save time": elapsed}, step=i) # lol 
-
-        # eval
-            model.eval() 
-            eval_inputs, eval_labels = get_batch(
-                valid_tokens,
-                config["batch_size"], 
-                config["context_length"],
-                config["device"]
-            )
-            with torch.no_grad():
-                eval_logits = model.forward(eval_inputs)
-                eval_loss = crossentropy(eval_logits, eval_labels)
-                eval_perplexity = math.exp(eval_loss)
-            
-            wandb.log({"Eval loss": eval_loss, "Eval perplexity": eval_perplexity}, step=i)
-
-        else:
-
-            # get batch
-            start = time.perf_counter()
-            inputs, labels = get_batch(
-                tokens, 
-                config["batch_size"], 
-                config["context_length"],
-                config["device"]
-            )
-            elapsed = time.perf_counter() - start
-            wandb.log({"Batch getting time": elapsed}, step=i)
-
-            # forward pass
-            start = time.perf_counter() 
-            model.train()
-            out_logits = model.forward(inputs) 
-            elapsed = time.perf_counter() - start
-            wandb.log({"Forward pass time": elapsed}, step=i)
-
-            # loss caclulation
-            start = time.perf_counter() 
-            loss = crossentropy(out_logits, labels)
-            elapsed = time.perf_counter() - start 
-            perplexity = math.exp(loss)
-            wandb.log({"Loss calc time": elapsed,
-                "Loss": loss, "Perplexity": perplexity}, step=i)
-
-            # backward pass
-            start = time.perf_counter()  
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            elapsed = time.perf_counter() - start 
-            wandb.log({"Backwards pass time": elapsed}, step=i)
-
-            # gradient clipping
-            start = time.perf_counter() 
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float('inf'))
-            # print(f"Grad norm: {grad_norm:.2f}")
-            elapsed = time.perf_counter() - start
-            wandb.log({"Grad calc time": elapsed, "Grad norm": grad_norm}, step=i)
-
-            start = time.perf_counter() 
-            gradient_clipping(model.parameters(), config["gradient_clip"])
-            elapsed = time.perf_counter() - start
-            wandb.log({"Grad clip time": elapsed}, step=i) 
-
-            # optimize
-            lr = get_lr_cosine_schedule(i,
-                config["lr_max"],
-                config["lr_min"],
-                config["warmup_iters"],
-                config["cos_iters"]
-            )
-            wandb.log({"LR": lr}, step=i)
-
-            for param_group in optimizer.param_groups:
-                param_group["lr"] = lr
-            
-            start = time.perf_counter()  
-            optimizer.step() 
-            elapsed = time.perf_counter() - start
-            wandb.log({"Optimizer step time": elapsed}, step=i)
-            
-
-            # most recent checkpoint
-            start = time.perf_counter() 
-            save_checkpoint(model, optimizer, i, f"{config['checkpoint_dir']}/latest.pt", config)
-            elapsed = time.perf_counter() - start
-            wandb.log({"Checkpoint save time": elapsed}, step=i) # lol
-
-
-
-
-        # archive checkpoint
-        if i % config["save_every"] == 0: # checkpoint every 4 iters?  
-            save_checkpoint(model, optimizer, i, f"{config['checkpoint_dir']}/checkpoint_{i}.pt", config)
-
-        #    pbar.update(1)
+class Trainer:
+    """Manages model training, optimization, and logging."""
+    
+    def __init__(self, model_class, config, tokens, valid_tokens):
+        """Initialize the Trainer.
         
-    run.finish() 
+        Args:
+            model_class: The model class to instantiate (e.g., TransformerLM)
+            config: Configuration dictionary containing model_settings and other params
+            tokens: Training token array
+            valid_tokens: Validation token array
+        """
+        self.model = model_class(**config["model_settings"]).to(config["device"])
+        if config["optimizer_use_defaults"]:
+            self.optimizer = AdamW(self.model.parameters())  # using defaults
+        else:
+            # TODO: optimizer call with parameters
+            pass
+
+        # hardcoding the wand B for now
+        wandb.login()
+        self.wandb_run = wandb.init(
+            entity=config["wandb_entity"],
+            project=config["log_project"],
+            name=config["run_name"],
+            config=config
+        )
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        config["checkpoint_dir"] = config["checkpoint_dir"] + "_" + timestamp
+        os.makedirs(config["checkpoint_dir"], exist_ok=True)
+        self.config = config
+        self.tokens = tokens
+        self.valid_tokens = valid_tokens
+
+    def train_eval_loop(self):
+        """Main training loop that orchestrates training and evaluation."""
+        for i in tqdm(range(self.config["num_iters"]), desc="Training Progress"):
+            # Training step
+            train_log = self._train_step(i)
+            
+            # Evaluation (if needed)
+            if i % self.config["eval_every"] == 0:
+                eval_log = self._eval_step(i)
+                train_log.update(eval_log)
+            
+            # Log all metrics
+            self.wandb_run.log(train_log, step=i)
+            
+            # Save latest checkpoint every iteration (for crash recovery)
+            self._save_latest_checkpoint(i)
+            
+            # Save snapshot checkpoint at save_every intervals
+            if i % self.config["save_every"] == 0:
+                self._save_snapshot_checkpoint(i)
+        
+        self.wandb_run.finish()
+
+    def _train_step(self, step):
+        """Perform a single training step. Returns dict of metrics to log."""
+        log = {}
+        
+        # Device sync for benchmarking
+        if self.config["device"] == "mps":
+            torch.mps.synchronize()
+        elif self.config["device"] == "cuda":
+            torch.cuda.synchronize()
+        
+        # Get batch
+        with timer("Batch getting time", log):
+            inputs, labels = get_batch(
+                self.tokens,
+                self.config["batch_size"],
+                self.config["model_settings"]["context_length"],
+                self.config["device"]
+            )
+        
+        # Forward pass
+        with timer("Forward pass time", log):
+            self.model.train()
+            out_logits = self.model.forward(inputs)
+        
+        # Loss calculation
+        with timer("Loss calc time", log):
+            loss = crossentropy(out_logits, labels)
+            perplexity = math.exp(loss.item())
+        
+        log["Loss"] = loss.item()
+        log["Perplexity"] = perplexity
+        
+        # Backward pass
+        with timer("Backwards pass time", log):
+            self.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+        
+        # Gradient clipping
+        with timer("Grad calc time", log):
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), 
+                max_norm=float('inf')
+            )
+        log["Grad norm"] = grad_norm.item()
+        
+        with timer("Grad clip time", log):
+            gradient_clipping(
+                self.model.parameters(), 
+                self.config["gradient_clip"]
+            )
+        
+        # Optimizer step with LR schedule
+        lr = get_lr_cosine_schedule(
+            step,
+            self.config["lr_max"],
+            self.config["lr_min"],
+            self.config["warmup_iters"],
+            self.config["cos_iters"]
+        )
+        log["LR"] = lr
+        
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = lr
+        
+        with timer("Optimizer step time", log):
+            self.optimizer.step()
+        
+        return log
+
+    def _eval_step(self, step):
+        """Perform evaluation on validation set. Returns dict of metrics to log."""
+        log = {}
+        
+        with timer("Eval batch getting time", log):
+            self.model.eval()
+            eval_inputs, eval_labels = get_batch(
+                self.valid_tokens,
+                self.config["batch_size"],
+                self.config["model_settings"]["context_length"],
+                self.config["device"]
+            )
+        
+        with timer("Eval forward pass time", log):
+            with torch.no_grad():
+                eval_logits = self.model.forward(eval_inputs)
+                eval_loss = crossentropy(eval_logits, eval_labels)
+                eval_perplexity = math.exp(eval_loss.item())
+        
+        log["Eval loss"] = eval_loss.item()
+        log["Eval perplexity"] = eval_perplexity
+        
+        return log
+
+    def _save_latest_checkpoint(self, step):
+        """Save latest checkpoint (for crash recovery)."""
+        log = {}
+        with timer("Checkpoint save time", log):
+            save_checkpoint(
+                self.model,
+                self.optimizer,
+                step,
+                f"{self.config['checkpoint_dir']}/latest.pt",
+                self.config
+            )
+        # Note: checkpoint save time will be logged in the next iteration's train_step
+
+    def _save_snapshot_checkpoint(self, step):
+        """Save snapshot checkpoint at save_every intervals."""
+        log = {}
+        with timer("Snapshot checkpoint save time", log):
+            save_checkpoint(
+                self.model,
+                self.optimizer,
+                step,
+                f"{self.config['checkpoint_dir']}/checkpoint_{step}.pt",
+                self.config
+            )
+        # Log snapshot save time
+        self.wandb_run.log(log, step=step)
+
+
+
 
 
 def main():
     """Main training function."""
     setDeviceAndSeeds(config)
     tokens, valid_tokens = getTokens(config)
-    train(config, tokens, valid_tokens)
+    trainer = Trainer(TransformerLM, config, tokens, valid_tokens)
+    trainer.train_eval_loop()
 
 if __name__ == "__main__":
     main()
