@@ -1,16 +1,6 @@
 from cs336_basics import (
-    Tokenizer, 
-    TransformerLM, 
-    AdamW, 
-    get_lr_cosine_schedule,
-    gradient_clipping,
-    get_batch,
-    crossentropy,
-    load_checkpoint,
-    save_bpe,
+    Tokenizer,
     load_bpe,
-    save_checkpoint,
-    train_bpe,
     load_model,
     softmax,
 )
@@ -18,14 +8,12 @@ from cs336_basics import (
 import torch
 import numpy as np
 import argparse
-import prompt_toolkit
-
-import signal, sys
+import signal
+import sys
 
 
 def setDeviceAndSeeds(config):
     """Checks for devices, adds to config, and sets RNG seed values."""
-    # device check
     if torch.backends.mps.is_available():
         config["device"] = "mps"
     elif torch.cuda.is_available():
@@ -35,30 +23,49 @@ def setDeviceAndSeeds(config):
 
     print(f"Using device {config['device']}.")
 
-    # set seed
-    # random.seed(config["rand_seed"])
     np.random.seed(config["rand_seed"])
     torch.manual_seed(config["rand_seed"])
 
     if config["device"] == "mps":
         torch.mps.manual_seed(config["rand_seed"])
     elif config["device"] == "cuda":
-        # torch.backends.cuda.deterministic = True # old?
         torch.cuda.manual_seed_all(config["rand_seed"])
-    
+
     print(f"Set seeds for torch/numpy and device {config['device']} to {config['rand_seed']}.")
 
-def setup_tokenizer(config) -> Tokenizer:
-    """Sets up tokenizer from config."""
-    vocab, merges = load_bpe(config["tokenizer_dir"])
-    tokenizer = Tokenizer(vocab, merges)
-    return tokenizer
 
-# TODO: 
-# input/response handler
-# forward -> logits -> top p sample -> tokens
-# check to see if endoftext has happened and terminate when it happens
-# also have a manual advance mode?
+def sample_top_p(logits: torch.Tensor, temperature: float, top_p: float) -> torch.Tensor:
+    """Sample from logits using top-p (nucleus) sampling.
+    
+    Args:
+        logits: Shape [batch, vocab_size] logits from model
+        temperature: Temperature for scaling logits
+        top_p: Cumulative probability threshold for nucleus sampling
+    
+    Returns:
+        Tensor of sampled token IDs, shape [batch]
+    """
+    scaled_logits = logits / temperature
+    probs = softmax(scaled_logits, -1)
+    sorted_probs, sorted_idx = torch.sort(probs, dim=-1, descending=True)
+    cdf = torch.cumsum(sorted_probs, dim=-1)
+    
+    # Create mask for tokens within top-p threshold
+    top_mask = cdf <= top_p
+    # Always include at least the first token (highest prob)
+    next_elements = top_mask.sum(dim=-1)
+    top_mask[0, next_elements[0]] = True
+    
+    # Zero out tokens outside nucleus and renormalize
+    sorted_probs = sorted_probs.masked_fill_(~top_mask, 0.0)
+    prob_sum = sorted_probs.sum(dim=-1, keepdim=True)
+    sorted_probs = sorted_probs / prob_sum.clamp(min=1e-8)
+    
+    # Sample and map back to original vocab indices
+    selected = torch.multinomial(sorted_probs, 1)
+    token_ids = sorted_idx.gather(1, selected).flatten()
+    return token_ids
+
 
 def handle_sigint(signum, frame):
     print("\nexiting")
@@ -76,63 +83,42 @@ def main():
 
     config, model = load_model(args.ckpt)
     vocab, merges = load_bpe(config["tokenizer_dir"])
-    tokenizer = Tokenizer(vocab, merges) # special tokens are already in the vocab at this point
+    tokenizer = Tokenizer(vocab, merges, special_tokens=config["special_tokens"])
     setDeviceAndSeeds(config)
     model.to(config["device"])
 
     print("Welcome to tinystories/assignment 1 inference.  Please submit input at the prompt, or type '!q' to quit.")
     quits = ["!q"]
     model.eval()
+    
+    signal.signal(signal.SIGINT, handle_sigint)
+    
     with torch.inference_mode():
         output = None
         while True:
-            signal.signal(signal.SIGINT, handle_sigint)
-
             if output is None or output == "<|endoftext|>":
-                sub = input("T$ ").strip()
+                # sub = input("T$ ").strip()
+                sub = input("T$ ") # removed strip for fun and profit
                 if sub in quits:
                     break
             else:
                 sub = output
 
-            inputs = tokenizer.encode(sub)[: args.max_new_tokens] # probably not where they intended
-            # turn list into a [1 len(inputs)] tensor of input
+            inputs = tokenizer.encode(sub)[: args.max_new_tokens]
             inputs = torch.tensor(inputs, device=config['device'], dtype=torch.long)
             inputs = inputs.unsqueeze(0)
-            logits = model.forward(inputs) # Float[Tensor, "batch seq vocab"]... seq?
-            # comes back [1, seq_len, vocab_size]... just want the last column
+            
+            logits = model.forward(inputs)
             pred_logit = logits[:, -1, :]
-            pred_logit.divide_(args.temperature)
-            probs = softmax(pred_logit, -1)
-            sorted_probs, sorted_idx = torch.sort(probs, dim=-1, descending=True)
-            cdf = torch.cumsum(sorted_probs, dim=-1)
-            top = cdf <= args.top_p_threshold
-            next_elements = top.sum(dim=-1) # ditch the unsqueeze?
-            top[0, next_elements[0]] = True # benefits of using the last column
-            # sorted_probs = sorted_probs.masked_fill_(~top, 0.).squeeze(0) # bot says not to fight the batch dim
-            sorted_probs = sorted_probs.masked_fill_(~top, 0.)
-            prob_sum = sorted_probs.sum(dim=-1, keepdim=True)
-            sorted_probs = sorted_probs / prob_sum.clamp(min=1e-8)
-            selected = torch.multinomial(sorted_probs, 1) # indices in sorted_probs, which we want to then index via sorted_idx into vocab
-            # but vocab is dict[int, bytes]... the int is the index!
-            token = sorted_idx.gather(1, selected).flatten().tolist()
-            new_output = tokenizer.decode(token)
+            
+            token_ids = sample_top_p(pred_logit, args.temperature, args.top_p_threshold)
+            new_output = tokenizer.decode(token_ids.tolist())
+            
             if output is not None:
                 output = output + new_output
-            else: output = new_output
+            else:
+                output = new_output
             print(output)
-            
-
-
-            
-
-
-
-
-
-
-
-
 
 
 if __name__ == "__main__":
