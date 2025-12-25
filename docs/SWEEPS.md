@@ -27,10 +27,10 @@ Hyperparameter sweeps allow you to systematically search for the best model conf
 
 ### 1. Initialize the Sweep
 
-From the repository root, create a new sweep:
+From the cs336_basics directory, create a new sweep:
 
 ```bash
-wandb sweep cs336_basics/sweep_config.yaml
+wandb sweep sweep_config.yaml
 ```
 
 This will output a sweep ID like:

@@ -50,7 +50,11 @@ DEFAULT_CONFIG = dict(
     tokenizer_dir="../tokenizers/tinystories/",
     train_file="../tokenized/tinystories_train.npy",
     valid_file="../tokenized/tinystories_valid.npy",
-    checkpoint_dir="../checkpoints/sweep/",
+    checkpoint_dir="../checkpoints/sweeps/",
+    
+    # Checkpointing
+    save_best=True,       # Save checkpoint when eval_loss improves
+    save_final=True,      # Save checkpoint at end of training
 
     # Tokenizer
     vocab_size=10000,
@@ -166,6 +170,11 @@ def train_sweep():
 
     # Build config from defaults + sweep parameters
     config = DEFAULT_CONFIG.copy()
+    
+    # Create unique checkpoint directory for this run
+    run_checkpoint_dir = os.path.join(config["checkpoint_dir"], run.id)
+    os.makedirs(run_checkpoint_dir, exist_ok=True)
+    config["run_checkpoint_dir"] = run_checkpoint_dir
 
     # Override with sweep parameters
     sweep_params = dict(wandb.config)
@@ -287,18 +296,32 @@ def train_sweep():
             if eval_loss < best_eval_loss:
                 best_eval_loss = eval_loss
                 log["best_eval_loss"] = best_eval_loss
+                
+                # Save best checkpoint
+                if config["save_best"]:
+                    best_path = os.path.join(config["run_checkpoint_dir"], "best.pt")
+                    save_checkpoint(model, optimizer, step, best_path, config)
+                    print(f"Saved best checkpoint (eval_loss={eval_loss:.4f})")
 
             print(f"Step {step}: train_loss={loss.item():.4f}, eval_loss={eval_loss:.4f}")
 
         # Log to wandb
         wandb.log(log, step=step)
 
+    # Save final checkpoint
+    if config["save_final"]:
+        final_path = os.path.join(config["run_checkpoint_dir"], "final.pt")
+        save_checkpoint(model, optimizer, config["num_iters"] - 1, final_path, config)
+        print(f"Saved final checkpoint")
+
     # Final summary
     wandb.summary["final_train_loss"] = log.get("train_loss", float("nan"))
     wandb.summary["final_eval_loss"] = best_eval_loss
     wandb.summary["final_eval_perplexity"] = math.exp(best_eval_loss)
+    wandb.summary["checkpoint_dir"] = config["run_checkpoint_dir"]
 
     print(f"Training complete. Best eval loss: {best_eval_loss:.4f}")
+    print(f"Checkpoints saved to: {config['run_checkpoint_dir']}")
     wandb.finish()
 
 
