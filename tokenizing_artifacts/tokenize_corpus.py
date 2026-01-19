@@ -4,15 +4,16 @@
 import numpy as np
 from cs336_basics.bpe import load_bpe, Tokenizer
 
-# INPUT_PATH = "./data/TinyStoriesV2-GPT4-train.txt"
+#INPUT_PATH = "./data/TinyStoriesV2-GPT4-train.txt"
 INPUT_PATH = "./data/TinyStoriesV2-GPT4-valid.txt"
 TOKENIZER_PATH = "./tokenizers/tinystories/"
 # OUTPUT_PATH = "./tokenized/tinystories_train.npy"
-OUTPUT_PATH = "./tokenized/tinystories_valid.npy"
+OUTPUT_PATH = "./tokenized/tinystories_valid_fixed.npy"
 
 # Load tokenizer
 vocab, merges = load_bpe(TOKENIZER_PATH)
-tokenizer = Tokenizer(vocab, merges)
+special_tokens = ["<|endoftext|>"]
+tokenizer = Tokenizer(vocab, merges, special_tokens=special_tokens)
 
 # Read and encode
 with open(INPUT_PATH, "r", encoding="utf-8") as f:

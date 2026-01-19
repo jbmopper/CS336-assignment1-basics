@@ -46,7 +46,7 @@ def train_bpe(
         boundaries = _find_chunk_boundaries(f, 8, b"<|endoftext|>")
 
     chunks = zip(boundaries[:-1], boundaries[1:])
-    with multiprocessing.Pool(processes=8) as pool:
+    with multiprocessing.Pool(processes=4) as pool: # changed to 4 processes for AWS x8aedz.xlarge
         chunked_counters = pool.map(
             _worker, [(input_path, s, e, special_tokens, GPT2_PAT) for s, e in chunks]
         )
