@@ -33,6 +33,23 @@ if [[ -n "$DRY_RUN" ]]; then
     echo "=== DRY RUN MODE ==="
 fi
 
+# Check for SSM Session Manager plugin (needed for SSM connections)
+if [[ -z "$USE_SSH" ]] && ! command -v session-manager-plugin &>/dev/null; then
+    echo "WARNING: session-manager-plugin not found."
+    echo "You need it to connect via SSM. Install from:"
+    echo "  https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"
+    echo ""
+    echo "Or use --use-ssh flag instead."
+    echo ""
+    if [[ -z "$DRY_RUN" ]]; then
+        read -p "Continue anyway? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+    fi
+fi
+
 echo "Region: $REGION"
 echo "Instance: $INSTANCE_TYPE (128GB RAM, 8 vCPU ARM64)"
 echo "Max spot price: \$$MAX_SPOT_PRICE/hr"
@@ -298,6 +315,7 @@ else
     echo ""
     echo "Download results when done (run locally):"
     echo "  aws s3 sync s3://$S3_BUCKET/assignment1-basics/tokenizers ./tokenizers-from-aws"
+    echo "  aws s3 sync s3://$S3_BUCKET/assignment1-basics/tokenized ./tokenized-from-aws"
 fi
 
 echo ""

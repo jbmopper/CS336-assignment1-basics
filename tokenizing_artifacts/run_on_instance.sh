@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# Source environment variables (SSM uses non-login shells)
+source /etc/profile.d/cs336.sh 2>/dev/null || true
+
 cd /data/assignment1-basics
 
 echo "=== Downloading OWT data ==="
@@ -16,6 +19,14 @@ if [[ ! -f owt_train.txt ]]; then
     gunzip owt_train.txt.gz
 else
     echo "owt_train.txt already exists, skipping download"
+fi
+if [[ ! -f owt_valid.txt ]]; then
+    echo "Downloading owt_valid.txt.gz..."
+    wget -q --show-progress https://huggingface.co/datasets/stanford-cs336/owt-sample/resolve/main/owt_valid.txt.gz
+    echo "Extracting..."
+    gunzip owt_valid.txt.gz
+else
+    echo "owt_valid.txt already exists, skipping download"
 fi
 cd ..
 
@@ -42,23 +53,63 @@ time sudo docker run \
         --output-dir /app/tokenizers/owt
 
 echo ""
-echo "=== Training complete! ==="
+echo "=== Tokenizer training complete! ==="
 echo "Finished at: $(date)"
 echo ""
-echo "Results saved to: tokenizers/owt/"
+
+echo "=== Tokenizing train dataset ==="
+mkdir -p tokenized
+echo "Started at: $(date)"
+
+time sudo docker run \
+    --memory=100g \
+    --memory-swap=100g \
+    -v "$(pwd)/data:/app/data:ro" \
+    -v "$(pwd)/tokenizers:/app/tokenizers:ro" \
+    -v "$(pwd)/tokenized:/app/tokenized" \
+    cs336-tokenize \
+    uv run python tokenizing_artifacts/tokenize_stream.py /app/data/owt_train.txt \
+        --tokenizer-dir /app/tokenizers/owt \
+        --output /app/tokenized/owt_train.npy
+
+echo ""
+echo "=== Tokenizing validation dataset ==="
+echo "Started at: $(date)"
+
+time sudo docker run \
+    --memory=100g \
+    --memory-swap=100g \
+    -v "$(pwd)/data:/app/data:ro" \
+    -v "$(pwd)/tokenizers:/app/tokenizers:ro" \
+    -v "$(pwd)/tokenized:/app/tokenized" \
+    cs336-tokenize \
+    uv run python tokenizing_artifacts/tokenize_stream.py /app/data/owt_valid.txt \
+        --tokenizer-dir /app/tokenizers/owt \
+        --output /app/tokenized/owt_valid.npy
+
+echo ""
+echo "=== All tasks complete! ==="
+echo "Finished at: $(date)"
+echo ""
+echo "Results saved to:"
+echo "  - tokenizers/owt/ (vocab.json, merges.pkl)"
+echo "  - tokenized/owt_train.npy"
+echo "  - tokenized/owt_valid.npy"
 echo ""
 
 # Upload results to S3 if bucket is configured
 if [[ -n "${S3_BUCKET:-}" ]]; then
     echo "Uploading results to S3..."
     aws s3 sync tokenizers/ "s3://$S3_BUCKET/assignment1-basics/tokenizers/"
-    echo "Results uploaded to s3://$S3_BUCKET/assignment1-basics/tokenizers/"
+    aws s3 sync tokenized/ "s3://$S3_BUCKET/assignment1-basics/tokenized/"
     echo ""
-    echo "Download locally with:"
+    echo "Results uploaded to S3. Download locally with:"
     echo "  aws s3 sync s3://$S3_BUCKET/assignment1-basics/tokenizers ./tokenizers-from-aws"
+    echo "  aws s3 sync s3://$S3_BUCKET/assignment1-basics/tokenized ./tokenized-from-aws"
 else
     echo "To upload results to S3, run:"
     echo "  aws s3 sync tokenizers/ s3://YOUR-BUCKET/assignment1-basics/tokenizers/"
+    echo "  aws s3 sync tokenized/ s3://YOUR-BUCKET/assignment1-basics/tokenized/"
 fi
 echo ""
 echo "Don't forget to terminate the instance when done!"
