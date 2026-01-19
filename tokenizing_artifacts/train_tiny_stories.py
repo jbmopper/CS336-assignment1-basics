@@ -16,7 +16,7 @@ vocab, merges = train_bpe(
 elapsed = time.time() - start_time
 print(f"Training took: {elapsed:.2f} seconds")
 
-output_path = "./tokenziers/tinystories/"
+output_path = "./tokenizers/tinystories/"
 save_bpe(output_path, vocab, merges)
 print(f"Saved to {output_path}.")
 

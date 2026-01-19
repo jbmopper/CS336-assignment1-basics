@@ -79,30 +79,12 @@ For learning/small models, A100 is plenty. H100 is overkill.
 
 ### Dockerfile
 
-Create `Dockerfile` in project root:
-
-```dockerfile
-FROM python:3.13-slim
-
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
-WORKDIR /app
-
-# Copy project files
-COPY pyproject.toml uv.lock ./
-COPY cs336_basics/ ./cs336_basics/
-
-# Install dependencies
-RUN uv sync --frozen
-
-CMD ["uv", "run", "python"]
-```
+Use the provided `Dockerfile.tokenize` for tokenizer training and corpus tokenization.
 
 ### Build
 
 ```bash
-docker build -t cs336-basics .
+docker build -f Dockerfile.tokenize -t cs336-tokenize .
 ```
 
 ### Run with memory limit
@@ -111,20 +93,27 @@ docker build -t cs336-basics .
 ```bash
 docker run --memory=100g \
   -v /path/to/data:/data:ro \
-  -v $(pwd)/tokenizers:/output \
-  cs336-basics \
-  uv run python -c "
-from cs336_basics import train_bpe, Tokenizer
-import json, pickle
+  -v $(pwd)/tokenizers:/app/tokenizers \
+  cs336-tokenize \
+  uv run python tokenizing_artifacts/train_owt_tokenizer.py \
+    /data/owt_train.txt \
+    --vocab-size 32000 \
+    --output-dir /app/tokenizers/owt \
+    --special-token "<|endoftext|>"
+```
 
-vocab, merges = train_bpe('/data/TinyStoriesV2-GPT4-train.txt', 32000, ['<|endoftext|>'])
-tokenizer = Tokenizer(vocab, merges, ['<|endoftext|>'])
-
-with open('/output/vocab.json', 'w') as f:
-    json.dump({k: v.decode('latin-1') for k, v in vocab.items()}, f)
-with open('/output/merges.pkl', 'wb') as f:
-    pickle.dump(merges, f)
-"
+**Tokenize corpus (CPU, memory-limited):**
+```bash
+docker run --memory=100g \
+  -v /path/to/data:/data:ro \
+  -v $(pwd)/tokenizers:/app/tokenizers \
+  -v $(pwd)/tokenized:/app/tokenized \
+  cs336-tokenize \
+  uv run python tokenizing_artifacts/tokenize_stream.py \
+    /data/owt_train.txt \
+    --tokenizer-dir /app/tokenizers/owt \
+    --output /app/tokenized/owt_train.npy \
+    --special-token "<|endoftext|>"
 ```
 
 **Model training (GPU):**

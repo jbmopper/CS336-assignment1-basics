@@ -157,7 +157,7 @@ def _tokenize_and_save(config, text_file, output_file, file_type):
         return
     
     vocab, merges = _get_or_create_tokenizer(config)
-    tokenizer = Tokenizer(vocab, merges)
+    tokenizer = Tokenizer(vocab, merges, special_tokens=config["special_tokens"])
     
     with open(text_file, "r", encoding="utf-8") as f:
         text = f.read()
