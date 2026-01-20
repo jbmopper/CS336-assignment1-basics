@@ -5,11 +5,11 @@
 set -euo pipefail
 
 # Configuration
-INSTANCE_TYPE="x8g.2xlarge"
+INSTANCE_TYPE="x8aedz.xlarge"  # 128GB RAM, 4 vCPU (x86)
 REGION="us-west-2"
-AZ="us-west-2b"
-AMI="ami-08b6b732b0e8f8f41"  # Amazon Linux 2023 ARM64
-MAX_SPOT_PRICE="0.25"  # Safety margin above current ~$0.16
+AZ="us-west-2a"
+AMI="ami-0a864d7e31fe76819"  # Amazon Linux 2023 x86_64
+MAX_SPOT_PRICE="0.35"  # Safety margin above current ~$0.27
 EBS_SIZE_GB="${EBS_SIZE_GB:-200}"  # For data + working space
 INSTANCE_NAME="cs336-tokenizer"
 IAM_ROLE_NAME="cs336-ssm-role"
