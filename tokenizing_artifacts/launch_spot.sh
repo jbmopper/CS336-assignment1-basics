@@ -139,14 +139,18 @@ aws iam put-role-policy \
 if ! aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE_NAME" &>/dev/null; then
     echo "Creating instance profile..."
     aws iam create-instance-profile --instance-profile-name "$INSTANCE_PROFILE_NAME" > /dev/null
-    aws iam add-role-to-instance-profile \
-        --instance-profile-name "$INSTANCE_PROFILE_NAME" \
-        --role-name "$IAM_ROLE_NAME"
     echo "Waiting for instance profile to propagate..."
-    sleep 10
+    sleep 5
 else
     echo "Instance profile '$INSTANCE_PROFILE_NAME' already exists"
 fi
+
+# Ensure role is attached to instance profile (idempotent - fails silently if already attached)
+echo "Ensuring role is attached to instance profile..."
+aws iam add-role-to-instance-profile \
+    --instance-profile-name "$INSTANCE_PROFILE_NAME" \
+    --role-name "$IAM_ROLE_NAME" 2>/dev/null || true
+sleep 5
 
 # Get or create security group
 SG_NAME="cs336-spot-sg"
