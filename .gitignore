@@ -185,3 +185,4 @@ checkpoints/
 
 # Wandb local files
 wandb/
+*.pem
