@@ -18,6 +18,7 @@ Signpost regions:
     - "get_batch": Data loading and transfer to device
     - "forward": Model forward pass
     - "backward": Loss backpropagation
+    - "optimizer_step": Optimizer parameter update
 """
 
 import argparse
@@ -217,7 +218,12 @@ def profile_training(
         lr = get_lr_cosine_schedule(step, lr_max, lr_min, warmup_iters, cos_iters)
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr
-        optimizer.step()
+        
+        sync_device(device)
+        
+        # === Optimizer step (signposted) ===
+        with signpost.interval("optimizer_step", signpost_id=step):
+            optimizer.step()
         
         if step % 10 == 0:
             print(f"Step {step:4d} | loss={loss.item():.4f}")

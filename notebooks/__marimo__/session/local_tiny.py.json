@@ -1,0 +1,79 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.19.4"
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "1d0db38904205bec4d6f6f6a1f6cec3e",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "wwYo",
+      "code_hash": "ade780d42d6d102e66ab63e8691c69ef",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"local_tinypy\">local_tiny.py</h1>\n<h2 id=\"benchmarkingsizingtraning-the-net-on-tinystories-locally\">benchmarking/sizing/traning the net on tinystories, locally</h2>\n<ol>\n<li>lay out the architecture and identify points of interest</li>\n<li>\n<span class=\"paragraph\">understand the M4 system</span>\n<ol start=\"2\">\n<li>\n<span class=\"paragraph\">notes from assignment:</span>\n<ul>\n<li>Do NOT use torch.set_float32_matmul_precision('high') - causes silent bugs</li>\n<li>Can use torch.compile(model, backend=\"aot_eager\") for modest speedup</li>\n<li>Adjust cosine LR schedule to reach minimum at exactly step X</li>\n</ul>\n</li>\n</ol>\n</li>\n<li>\n<span class=\"paragraph\">benchmark different parts</span>\n<ol>\n<li>get a feel for what bad/good sizes are</li>\n<li>practice using benchmark</li>\n</ol>\n</li>\n<li>\n<span class=\"paragraph\">run some sweeps</span>\n<ol>\n<li>\n<span class=\"paragraph\">assignment suggests sweeping over learing rate to identify where things get unstable</span>\n<ol>\n<li>target validation loss of \u22642.00</li>\n</ol>\n</li>\n<li>test different batch sizes until OOM (fun!)</li>\n</ol>\n</li>\n<li>\n<span class=\"paragraph\">try some ablations</span>\n<ol>\n<li>ablate RoPE (version already exists)</li>\n<li>ablate all RMSnorms and test previous optmial learning rate</li>\n<li>try post-norm instead of pre-norm (may skip)</li>\n<li>try using SiLU instead of SwiGLU</li>\n</ol>\n</li>\n</ol></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "uuGP",
+      "code_hash": "26e85079f4a6cf6bacd54a7ff58bdc81",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"notes-on-the-system-generated\">Notes on the system (generated)</h1>\n<h2 id=\"m4-macbook-air-hardware-specs\">M4 MacBook Air Hardware Specs</h2>\n<span class=\"paragraph\">Your 24GB M4 MacBook Air has:</span>\n<ul>\n<li><strong>10-core GPU</strong> (8 performance + 2 efficiency, or 10-core variant)</li>\n<li><strong>120 GB/s memory bandwidth</strong> (notably lower than M4 Pro's 273GB/s or NVIDIA GPUs' 1TB/s+)</li>\n<li><strong>16-core Neural Engine</strong> (38 TOPS)</li>\n<li><strong>Unified Memory Architecture</strong> - CPU and GPU share the same physical memory pool</li>\n</ul>\n<h2 id=\"key-optimization-insights\">Key Optimization Insights</h2>\n<h3 id=\"1-memory-architecture-unified-memory\">1. Memory Architecture (Unified Memory)</h3>\n<span class=\"paragraph\">The unified memory is both a strength and constraint:</span>\n<span class=\"paragraph\"><strong>Advantages:</strong></span>\n<ul>\n<li>Zero-copy tensor transfers between CPU/GPU - no PCIe bottleneck</li>\n<li>Your full 24GB is available to both CPU and GPU (vs. discrete GPUs with separate VRAM)</li>\n<li>Great for prototyping and fitting larger models than would fit in typical GPU VRAM</li>\n</ul>\n<span class=\"paragraph\"><strong>Constraints:</strong></span>\n<ul>\n<li><strong>120 GB/s bandwidth is ~8-10x lower than datacenter GPUs</strong> - this is the main bottleneck for large matrix multiplications</li>\n<li><strong>Individual tensor operations are limited to 2^32 bytes (4GB)</strong> - this is a Metal/MPS limitation, not a RAM limitation. Attention matrices with long sequences can hit this.</li>\n</ul>\n<h3 id=\"2-optimal-dimensions-for-mps\">2. Optimal Dimensions for MPS</h3>\n<span class=\"paragraph\">Based on the research, here are recommended guidelines:</span>\n<table>\n<thead>\n<tr>\n<th>Parameter</th>\n<th>Recommendation</th>\n<th>Rationale</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td><strong>d_model</strong></td>\n<td>256, 512, 768, or 1024</td>\n<td>Multiples of 64/128 align well with GPU warp sizes</td>\n</tr>\n<tr>\n<td><strong>d_ff</strong></td>\n<td>4\u00d7 d_model (or ~2.67\u00d7 with SwiGLU)</td>\n<td>Standard transformer ratio</td>\n</tr>\n<tr>\n<td><strong>num_heads</strong></td>\n<td>d_model / 64 or d_model / 128</td>\n<td>Head dim of 64-128 is typical</td>\n</tr>\n<tr>\n<td><strong>Context length</strong></td>\n<td>\u22642048 initially</td>\n<td>Attention is O(n\u00b2); longer sequences risk hitting 4GB tensor limit</td>\n</tr>\n<tr>\n<td><strong>Batch size</strong></td>\n<td>16-64 for training</td>\n<td>Memory scales with batch \u00d7 context\u00b2 \u00d7 d_model</td>\n</tr>\n</tbody>\n</table>\n<span class=\"paragraph\">One note: <code>num_heads=16</code> with <code>d_model=512</code> gives a head dimension of 32, which is smaller than typical (64-128). You might see slight efficiency gains with <code>num_heads=8</code> (head_dim=64).</span>\n<h3 id=\"3-mps-specific-optimizations\">3. MPS-Specific Optimizations</h3>\n<span class=\"paragraph\"><strong>Precision:</strong></span>\n<ul>\n<li>MPS prefers <strong>float32</strong> over float16 - FP16 can cause numerical instability in softmax, especially with long sequences</li>\n<li>MPS doesn't support FP8/FP4 or FlashAttention natively</li>\n</ul>\n<span class=\"paragraph\"><strong>Attention for Long Sequences:</strong>\nIf you extend context_length beyond ~4K tokens, implement <strong>attention chunking/slicing</strong>:\n<div class=\"language-python codehilite\"><pre><span></span><code><span class=\"c1\"># Instead of computing full attention matrix at once,</span>\n<span class=\"c1\"># process in chunks to stay under 4GB tensor limit</span>\n</code></pre></div></span>\n<h3 id=\"4-practical-batch-size-selection\">4. Practical Batch Size Selection</h3>\n<span class=\"paragraph\">Memory scales roughly as: <code>batch_size \u00d7 context_length\u00b2 \u00d7 d_model \u00d7 4 bytes</code></span>\n<span class=\"paragraph\">For your config (d_model=512, context_length=256):</span>\n<ul>\n<li><strong>batch_size=32</strong>: ~134 MB for attention matrices alone</li>\n<li><strong>batch_size=64</strong>: ~268 MB</li>\n<li><strong>batch_size=128</strong>: ~536 MB</li>\n</ul>\n<span class=\"paragraph\">With 24GB unified memory and ~17M params (~68MB for model), you have headroom. Try:</span>\n<ul>\n<li>Start with batch_size=64-128 for training</li>\n<li>Use gradient accumulation if you want effective batch sizes of 256+</li>\n</ul>\n<h3 id=\"5-bandwidth-bound-optimizations\">5. Bandwidth-Bound Optimizations</h3>\n<span class=\"paragraph\">Since M4's 120GB/s bandwidth is the main bottleneck:</span>\n<ol>\n<li><strong>Reduce memory traffic</strong> - fuse operations where possible</li>\n<li><strong>Avoid CPU fallbacks</strong> - check for MPS-unsupported ops</li>\n<li><strong>Use memory-mapped data loading</strong> (you're already doing this with <code>mmap_mode='r'</code>)</li>\n<li><strong>Consider MLX</strong> for inference-heavy workloads - it's specifically optimized for Apple Silicon</li>\n</ol>\n<h3 id=\"summary-recommendations-for-your-setup\">Summary Recommendations for Your Setup</h3>\n<table>\n<thead>\n<tr>\n<th>Aspect</th>\n<th>Current</th>\n<th>Suggested</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>d_model</td>\n<td>512</td>\n<td>Good - keep</td>\n</tr>\n<tr>\n<td>num_heads</td>\n<td>16</td>\n<td>Try 8 (head_dim=64)</td>\n</tr>\n<tr>\n<td>d_ff</td>\n<td>1344</td>\n<td>Could try 2048 (4\u00d7512)</td>\n</tr>\n<tr>\n<td>context_length</td>\n<td>256</td>\n<td>Good for training; can push to 512-1024</td>\n</tr>\n<tr>\n<td>batch_size</td>\n<td>32</td>\n<td>Try 64-128</td>\n</tr>\n<tr>\n<td>dtype</td>\n<td>(default float32)</td>\n<td>Keep float32 for MPS stability</td>\n</tr>\n</tbody>\n</table></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "rfIG",
+      "code_hash": "0c994a762f50f630e1a787e1b507c148",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\">Let's start by initializing the config dict and loading the data</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ICku",
+      "code_hash": null,
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "qFIP",
+      "code_hash": "5c467e8eaf584f4901bc009c6ecffd86",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\">Next we can review the training class we've made:</span></span>"
+          }
+        }
+      ],
+      "console": []
+    }
+  ]
+}

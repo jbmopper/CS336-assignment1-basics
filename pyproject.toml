@@ -7,9 +7,9 @@ requires-python = ">=3.11"
 dependencies = [
     "einops>=0.8.1", # tensor operations
     "einx>=0.3.0", # more general tensor operations
-    "ipykernel>=6.29.0", # Jupyter kernel support
+    # "ipykernel>=6.29.0", # Jupyter kernel support
     "jaxtyping>=0.3.0", # type hints for pytorch/jax/numpy
-    "jupyter>=1.0.0", # Jupyter notebook
+    # "jupyter>=1.0.0", # Jupyter notebook
     "numpy",
     "psutil>=6.1.1",
     "pytest>=8.3.4",
@@ -21,6 +21,13 @@ dependencies = [
     "tqdm>=4.67.1",
     "wandb>=0.19.7",
     "ty>=0.0.1a16",
+    # Analysis and reactive notebooks
+    "polars",
+    "plotly",
+    "duckdb",
+    "pyarrow",
+    "marimo",
+    "pyzmq>=27.1.0",
 ]
 
 [build-system]
