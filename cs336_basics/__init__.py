@@ -5,7 +5,7 @@ import importlib.metadata
 __version__ = importlib.metadata.version("cs336_basics")
 
 from cs336_basics.nn import (
-    Linear, Embedding, RMSNorm, SwiGLU,
+    Linear, Embedding, RMSNorm, SwiGLU, FFNSiLU,
     Rope, Multihead, MultiheadRope,
     softmax, silu, scaled_dot_product_attention
 )
@@ -16,10 +16,11 @@ from cs336_basics.implementations import (
     load_model
 )
 from cs336_basics.bpe import train_bpe, Tokenizer, save_bpe, load_bpe
+from cs336_basics.training import Trainer, timer
 
 __all__ = [
     # Neural network modules
-    'Linear', 'Embedding', 'RMSNorm', 'SwiGLU',
+    'Linear', 'Embedding', 'RMSNorm', 'SwiGLU', 'FFNSiLU',
     'Rope', 'Multihead', 'MultiheadRope',
     'softmax', 'silu', 'scaled_dot_product_attention',
     # Transformer
@@ -28,5 +29,7 @@ __all__ = [
     'get_batch', 'gradient_clipping', 'save_checkpoint', 'load_checkpoint',
     'AdamW', 'get_lr_cosine_schedule', 'load_model',
     # Tokenizer
-    'train_bpe', 'Tokenizer', 'save_bpe', 'load_bpe'
+    'train_bpe', 'Tokenizer', 'save_bpe', 'load_bpe',
+    # Training helpers
+    'Trainer', 'timer',
 ]

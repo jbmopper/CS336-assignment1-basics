@@ -27,6 +27,7 @@ from cs336_basics import (
     save_checkpoint,
     train_bpe,
 )
+from cs336_basics.training import timer
 
 from tqdm.auto import tqdm
 import wandb
@@ -35,12 +36,7 @@ import os
 import math
 import numpy as np
 import torch
-import time
 import argparse
-
-from datetime import datetime
-from contextlib import contextmanager
-
 
 # Default configuration (will be overridden by sweep)
 DEFAULT_CONFIG = dict(
@@ -129,16 +125,6 @@ def get_tokens(config: dict) -> tuple:
 
     print(f"Loaded {len(tokens):,} training tokens, {len(valid_tokens):,} validation tokens")
     return tokens, valid_tokens
-
-
-@contextmanager
-def timer(name: str, log_dict: dict = None):
-    """Context manager for timing code blocks."""
-    start = time.perf_counter()
-    yield
-    elapsed = time.perf_counter() - start
-    if log_dict is not None:
-        log_dict[name] = elapsed
 
 
 def evaluate(model, valid_tokens, config, device) -> tuple:

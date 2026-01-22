@@ -8,7 +8,7 @@ from jaxtyping import Float, Int, Bool
 import einx
 
 __all__ = [
-    'Linear', 'Embedding', 'RMSNorm', 'SwiGLU',
+    'Linear', 'Embedding', 'RMSNorm', 'SwiGLU', 'FFNSiLU',
     'Rope', 'Multihead', 'MultiheadRope',
     'softmax', 'silu', 'scaled_dot_product_attention'
 ]
@@ -87,6 +87,17 @@ class SwiGLU(nn.Module):
 
     def forward(self, x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
         return self.w2(silu(self.w1(x)) * self.w3(x))
+
+class FFNSiLU(nn.Module):
+    """SiLU feed-forward network with output projection."""
+    
+    def __init__(self, d_model: int, d_ff: int) -> None:
+        super().__init__()
+        self.w1 = Linear(d_model, d_ff)
+        self.w2 = Linear(d_ff, d_model)
+
+    def forward(self, x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
+        return self.w2(silu(self.w1(x)))
 
 
 def softmax(in_features: Tensor, dim: int) -> Tensor:

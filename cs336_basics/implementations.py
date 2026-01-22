@@ -6,7 +6,7 @@ import numpy.typing as npt
 from collections.abc import Iterable
 
 from cs336_basics.nn import (
-    Linear, Embedding, RMSNorm, SwiGLU,
+    Linear, Embedding, RMSNorm, SwiGLU, FFNSiLU,
     Rope, Multihead, MultiheadRope,
     softmax, silu, scaled_dot_product_attention
 )
@@ -35,7 +35,7 @@ def crossentropy(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
 
 
 class TransformerBlock(nn.Module):
-    """Pre-norm Transformer block with RoPE attention and SwiGLU FFN."""
+    """Configurable Transformer block for ablations."""
     
     def __init__(
         self,
@@ -43,7 +43,11 @@ class TransformerBlock(nn.Module):
         num_heads: int,
         d_ff: int,
         max_seq_len: int,
-        theta: float
+        theta: float,
+        norm_mode: str = "pre",
+        use_rope: bool = True,
+        ffn_type: str = "swiglu",
+        ffn_hidden_dim: int | None = None,
     ) -> None:
         super().__init__()
         self.d_model = d_model
@@ -52,23 +56,67 @@ class TransformerBlock(nn.Module):
         self.max_seq_len = max_seq_len
         self.theta = theta
         self.eps = 1e-5
-        self.ln1 = RMSNorm(self.d_model, self.eps)
-        self.ln2 = RMSNorm(self.d_model, self.eps)
-        self.ffn = SwiGLU(self.d_model, self.d_ff)
-        self.attn = MultiheadRope(self.num_heads, self.d_model, self.theta, self.max_seq_len)
+        self.norm_mode = norm_mode
+        self.use_rope = use_rope
+
+        if self.norm_mode not in {"pre", "post", "none"}:
+            raise ValueError(f"Unsupported norm_mode: {self.norm_mode}")
+        if ffn_type not in {"swiglu", "silu"}:
+            raise ValueError(f"Unsupported ffn_type: {ffn_type}")
+
+        if self.norm_mode == "none":
+            self.ln1 = nn.Identity()
+            self.ln2 = nn.Identity()
+        else:
+            self.ln1 = RMSNorm(self.d_model, self.eps)
+            self.ln2 = RMSNorm(self.d_model, self.eps)
+
+        if ffn_type == "silu":
+            ffn_hidden_dim = ffn_hidden_dim or (4 * d_model)
+            self.ffn = FFNSiLU(self.d_model, ffn_hidden_dim)
+        else:
+            ffn_hidden_dim = ffn_hidden_dim or d_ff
+            self.ffn = SwiGLU(self.d_model, ffn_hidden_dim)
+
+        if use_rope:
+            self.attn = MultiheadRope(self.num_heads, self.d_model, self.theta, self.max_seq_len)
+        else:
+            self.attn = Multihead(self.num_heads, self.d_model)
 
     def forward(self, in_features: Float[Tensor, "... seq d_model"]) -> Float[Tensor, "... seq d_model"]:
-        norm1 = self.ln1.forward(in_features)
-        token_positions = torch.arange(in_features.size(-2), dtype=int)
-        attention_output = self.attn.forward(norm1, token_positions)
+        token_positions = torch.arange(in_features.size(-2), device=in_features.device, dtype=torch.long)
+
+        if self.norm_mode == "pre":
+            norm1 = self.ln1.forward(in_features)
+            if self.use_rope:
+                attention_output = self.attn.forward(norm1, token_positions)
+            else:
+                attention_output = self.attn.forward(norm1)
+            in_features = in_features + attention_output
+            norm2 = self.ln2.forward(in_features)
+            ffn_output = self.ffn.forward(norm2)
+            return in_features + ffn_output
+
+        if self.norm_mode == "post":
+            if self.use_rope:
+                attention_output = self.attn.forward(in_features, token_positions)
+            else:
+                attention_output = self.attn.forward(in_features)
+            in_features = self.ln1.forward(in_features + attention_output)
+            ffn_output = self.ffn.forward(in_features)
+            return self.ln2.forward(in_features + ffn_output)
+
+        if self.use_rope:
+            attention_output = self.attn.forward(in_features, token_positions)
+        else:
+            attention_output = self.attn.forward(in_features)
         in_features = in_features + attention_output
-        norm2 = self.ln2.forward(in_features)
-        ffn_output = self.ffn.forward(norm2)
+        ffn_output = self.ffn.forward(in_features)
         return in_features + ffn_output
 
 
 class TransformerLM(nn.Module):
-    """Transformer language model with RoPE."""
+    """Transformer language model with configurable blocks."""
     
     def __init__(
         self,
@@ -79,6 +127,11 @@ class TransformerLM(nn.Module):
         d_ff: int,
         context_length: int,
         rope_theta: float,
+        norm_mode: str = "pre",
+        use_rope: bool = True,
+        ffn_type: str = "swiglu",
+        ffn_hidden_dim: int | None = None,
+        final_norm: bool | None = None,
     ) -> None:
         super().__init__()
         self.vocab_size = vocab_size
@@ -88,12 +141,28 @@ class TransformerLM(nn.Module):
         self.d_ff = d_ff
         self.max_seq_len = context_length
         self.theta = rope_theta
+        self.norm_mode = norm_mode
+        self.use_rope = use_rope
+        self.ffn_type = ffn_type
+        self.ffn_hidden_dim = ffn_hidden_dim
         self.layers = nn.ModuleList([
-            TransformerBlock(d_model, num_heads, d_ff, context_length, rope_theta)
+            TransformerBlock(
+                d_model,
+                num_heads,
+                d_ff,
+                context_length,
+                rope_theta,
+                norm_mode=norm_mode,
+                use_rope=use_rope,
+                ffn_type=ffn_type,
+                ffn_hidden_dim=ffn_hidden_dim,
+            )
             for _ in range(num_layers)
         ])
         self.eps = 1e-5
-        self.ln_final = RMSNorm(self.d_model, self.eps)
+        if final_norm is None:
+            final_norm = norm_mode == "pre"
+        self.ln_final = RMSNorm(self.d_model, self.eps) if final_norm else nn.Identity()
         self.lm_head = Linear(d_model, vocab_size)
         self.token_embeddings = Embedding(vocab_size, d_model)
 
@@ -177,7 +246,12 @@ def load_model(src) -> tuple[dict, TransformerLM]:
         config["num_layers"],
         config["d_ff"],
         config["context_length"],
-        config["rope_theta"]
+        config["rope_theta"],
+        norm_mode=config.get("norm_mode", "pre"),
+        use_rope=config.get("use_rope", True),
+        ffn_type=config.get("ffn_type", "swiglu"),
+        ffn_hidden_dim=config.get("ffn_hidden_dim"),
+        final_norm=config.get("final_norm"),
     ).to(config["device"]) # does this happen here?
 
     model.load_state_dict(obj["model"])
