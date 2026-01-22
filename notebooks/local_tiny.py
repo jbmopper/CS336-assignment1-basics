@@ -28,19 +28,21 @@ def _(a, b, c, mo, scale):
     controls = mo.vstack([a, b, c, scale])
     outputs = mo.md(
         f"""
-**Inputs**
-- A = {a.value}
-- B = {b.value}
-- C = {c.value}
-- Scale = {scale.value}
+    **Inputs**
+    - A = {a.value}
+    - B = {b.value}
+    - C = {c.value}
+    - Scale = {scale.value}
 
-**Outputs**
-- Weighted(A,B) = 0.6*A + 0.4*B = {weighted:.2f}
-- Coupled(A,B,C) = (A - B) * C = {coupled:.2f}
-- Blended = (Weighted + Coupled) * Scale = {blended:.2f}
-"""
+    **Outputs**
+    - Weighted(A,B) = 0.6*A + 0.4*B = {weighted:.2f}
+    - Coupled(A,B,C) = (A - B) * C = {coupled:.2f}
+    - Blended = (Weighted + Coupled) * Scale = {blended:.2f}
+    """
     )
-    return mo.vstack([controls, outputs])
+
+    controls, weighted, coupled, blended
+    return
 
 
 @app.cell(hide_code=True)
