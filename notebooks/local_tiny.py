@@ -10,6 +10,39 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _(mo):
+    a = mo.ui.slider(0, 100, value=30, label="A (0-100)")
+    b = mo.ui.slider(0, 100, value=70, label="B (0-100)")
+    c = mo.ui.number(value=1.5, label="C (float)")
+    scale = mo.ui.slider(0.1, 5.0, value=1.0, step=0.1, label="Scale")
+    return a, b, c, scale
+
+
+@app.cell
+def _(a, b, c, mo, scale):
+    weighted = (a.value * 0.6) + (b.value * 0.4)
+    coupled = (a.value - b.value) * c.value
+    blended = (weighted + coupled) * scale.value
+
+    controls = mo.vstack([a, b, c, scale])
+    outputs = mo.md(
+        f"""
+**Inputs**
+- A = {a.value}
+- B = {b.value}
+- C = {c.value}
+- Scale = {scale.value}
+
+**Outputs**
+- Weighted(A,B) = 0.6*A + 0.4*B = {weighted:.2f}
+- Coupled(A,B,C) = (A - B) * C = {coupled:.2f}
+- Blended = (Weighted + Coupled) * Scale = {blended:.2f}
+"""
+    )
+    return mo.vstack([controls, outputs])
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -206,7 +239,7 @@ def _(np):
     # Load tokenized data
     tokens = np.load(config["train_file"], mmap_mode='r')
     print(f"Training tokens loaded from {config['train_file']}, shape {tokens.shape}.")
-    
+
     valid_tokens = np.load(config["valid_file"], mmap_mode='r')
     print(f"Validation tokens loaded from {config['valid_file']}, shape {valid_tokens.shape}.")
     return
