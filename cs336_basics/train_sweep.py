@@ -13,27 +13,11 @@ Usage:
     wandb agent <entity>/<project>/<sweep_id>
 """
 
-from cs336_basics import (
-    Tokenizer,
-    TransformerLM,
-    AdamW,
-    get_lr_cosine_schedule,
-    gradient_clipping,
-    get_batch,
-    crossentropy,
-    load_checkpoint,
-    save_bpe,
-    load_bpe,
-    save_checkpoint,
-    train_bpe,
-)
-from cs336_basics.training import timer
-
-from tqdm.auto import tqdm
+from cs336_basics import TransformerLM
+from cs336_basics.training import Trainer
 import wandb
 
 import os
-import math
 import numpy as np
 import torch
 import argparse
@@ -70,13 +54,16 @@ DEFAULT_CONFIG = dict(
     gradient_clip=1.0,
 
     # Learning rate schedule
-    lr_max=1e-3,
-    lr_min=1e-4,
-    warmup_iters=100,
-    cos_iters=1000,
+    scheduler_lr_max=1e-3,
+    scheduler_lr_min=1e-4,
+    scheduler_warmup_iters=100,
+    scheduler_cos_iters=1000,
 
     # Optimizer
-    weight_decay=0.01,
+    optimizer_lr=1e-3,
+    optimizer_betas=(0.9, 0.999),
+    optimizer_eps=1e-8,
+    optimizer_weight_decay=1e-2,
 
     # Evaluation
     eval_every=50,
@@ -127,28 +114,6 @@ def get_tokens(config: dict) -> tuple:
     return tokens, valid_tokens
 
 
-def evaluate(model, valid_tokens, config, device) -> tuple:
-    """Run evaluation on validation set. Returns (avg_loss, avg_perplexity)."""
-    model.eval()
-    total_loss = 0.0
-
-    with torch.no_grad():
-        for _ in range(config["eval_batches"]):
-            inputs, labels = get_batch(
-                valid_tokens,
-                config["batch_size"],
-                config["context_length"],
-                device
-            )
-            logits = model(inputs)
-            loss = crossentropy(logits, labels)
-            total_loss += loss.item()
-
-    avg_loss = total_loss / config["eval_batches"]
-    avg_perplexity = math.exp(avg_loss)
-    return avg_loss, avg_perplexity
-
-
 def train_sweep():
     """Main training function for sweep runs."""
     # Initialize wandb run - this will get sweep config
@@ -160,7 +125,8 @@ def train_sweep():
     # Create unique checkpoint directory for this run
     run_checkpoint_dir = os.path.join(config["checkpoint_dir"], run.id)
     os.makedirs(run_checkpoint_dir, exist_ok=True)
-    config["run_checkpoint_dir"] = run_checkpoint_dir
+    config["checkpoint_dir"] = run_checkpoint_dir
+    config["checkpoint_add_timestamp"] = False
 
     # Override with sweep parameters
     sweep_params = dict(wandb.config)
@@ -169,8 +135,8 @@ def train_sweep():
             config[key] = value
             print(f"Sweep override: {key} = {value}")
 
-    # Ensure cos_iters matches num_iters
-    config["cos_iters"] = config["num_iters"]
+    # Ensure scheduler_cos_iters matches num_iters
+    config["scheduler_cos_iters"] = config["num_iters"]
 
     # Build model settings dict
     model_settings = dict(
@@ -182,6 +148,9 @@ def train_sweep():
         context_length=config["context_length"],
         rope_theta=config["rope_theta"],
     )
+    for key in ("norm_mode", "use_rope", "ffn_type", "ffn_hidden_dim", "final_norm"):
+        if key in config:
+            model_settings[key] = config[key]
 
     # Validate model settings
     if model_settings["d_model"] % model_settings["num_heads"] != 0:
@@ -191,6 +160,7 @@ def train_sweep():
 
     # Set up device and seeds
     device = set_device_and_seeds(config["rand_seed"])
+    config["device"] = device
 
     # Load data
     try:
@@ -200,115 +170,14 @@ def train_sweep():
         wandb.finish(exit_code=1)
         return
 
-    # Create model
+    config["model_settings"] = model_settings
     print(f"Creating model with settings: {model_settings}")
-    model = TransformerLM(**model_settings).to(device)
-
-    # Count parameters
-    num_params = sum(p.numel() for p in model.parameters())
+    trainer = Trainer(TransformerLM, config, tokens, valid_tokens, wandb_run=run)
+    num_params = sum(p.numel() for p in trainer.model.parameters())
     print(f"Model has {num_params:,} parameters")
-    wandb.log({"num_parameters": num_params})
+    run.log({"num_parameters": num_params})
 
-    # Create optimizer
-    optimizer = AdamW(
-        model.parameters(),
-        lr=config["lr_max"],
-        weight_decay=config["weight_decay"],
-    )
-
-    # Training loop
-    best_eval_loss = float("inf")
-
-    for step in tqdm(range(config["num_iters"]), desc="Training"):
-        log = {}
-
-        # Sync device for accurate timing
-        if device == "mps":
-            torch.mps.synchronize()
-        elif device == "cuda":
-            torch.cuda.synchronize()
-
-        # Get batch
-        inputs, labels = get_batch(
-            tokens,
-            config["batch_size"],
-            config["context_length"],
-            device
-        )
-
-        # Forward pass
-        model.train()
-        logits = model(inputs)
-        loss = crossentropy(logits, labels)
-
-        log["train_loss"] = loss.item()
-        log["train_perplexity"] = math.exp(loss.item())
-
-        # Backward pass
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-
-        # Gradient clipping
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            model.parameters(),
-            max_norm=float("inf")
-        )
-        log["grad_norm"] = grad_norm.item()
-
-        gradient_clipping(model.parameters(), config["gradient_clip"])
-
-        # Learning rate schedule
-        lr = get_lr_cosine_schedule(
-            step,
-            config["lr_max"],
-            config["lr_min"],
-            config["warmup_iters"],
-            config["cos_iters"]
-        )
-        log["learning_rate"] = lr
-
-        for param_group in optimizer.param_groups:
-            param_group["lr"] = lr
-
-        # Optimizer step
-        optimizer.step()
-
-        # Evaluation
-        if step % config["eval_every"] == 0 or step == config["num_iters"] - 1:
-            eval_loss, eval_perplexity = evaluate(model, valid_tokens, config, device)
-            log["eval_loss"] = eval_loss
-            log["eval_perplexity"] = eval_perplexity
-
-            if eval_loss < best_eval_loss:
-                best_eval_loss = eval_loss
-                log["best_eval_loss"] = best_eval_loss
-                
-                # Save best checkpoint
-                if config["save_best"]:
-                    best_path = os.path.join(config["run_checkpoint_dir"], "best.pt")
-                    save_checkpoint(model, optimizer, step, best_path, config)
-                    print(f"Saved best checkpoint (eval_loss={eval_loss:.4f})")
-
-            print(f"Step {step}: train_loss={loss.item():.4f}, eval_loss={eval_loss:.4f}")
-
-        # Log to wandb
-        wandb.log(log, step=step)
-
-    # Save final checkpoint
-    if config["save_final"]:
-        final_path = os.path.join(config["run_checkpoint_dir"], "final.pt")
-        save_checkpoint(model, optimizer, config["num_iters"] - 1, final_path, config)
-        print(f"Saved final checkpoint")
-
-    # Final summary
-    wandb.summary["final_train_loss"] = log.get("train_loss", float("nan"))
-    wandb.summary["final_eval_loss"] = best_eval_loss
-    wandb.summary["final_eval_perplexity"] = math.exp(best_eval_loss)
-    wandb.summary["checkpoint_dir"] = config["run_checkpoint_dir"]
-
-    print(f"Training complete. Best eval loss: {best_eval_loss:.4f}")
-    print(f"Checkpoints saved to: {config['run_checkpoint_dir']}")
-    wandb.finish()
+    trainer.train_eval_loop()
 
 
 def main():

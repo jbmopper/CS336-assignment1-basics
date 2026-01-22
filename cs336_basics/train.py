@@ -59,17 +59,16 @@ config = dict(
 
 
     # optimizer (adamw)
-    optimizer_use_defaults = True,
-    optimizer_lr = 0.,
-    optimizer_betas = (0., 0.),
+    optimizer_lr = 1e-3,
+    optimizer_betas = (0.9, 0.999),
     optimizer_eps = 1e-08,
-    optimizer_weight_decay = 0.,
+    optimizer_weight_decay = 1e-2,
 
     # lr scheduler (cosine with warmup)
-    lr_max = 1e-3, # typical 1e-4 to 1e-3, samller models -> larger lr
-    lr_min = 1e-4, # 10-100x smaller than max
-    warmup_iters = 100, # num_iters // 5 or 10
-    cos_iters = 1000, # includes warmup
+    scheduler_lr_max = 1e-3, # typical 1e-4 to 1e-3, smaller models -> larger lr
+    scheduler_lr_min = 1e-4, # 10-100x smaller than max
+    scheduler_warmup_iters = 100, # num_iters // 5 or 10
+    scheduler_cos_iters = 1000, # includes warmup
 
     # If loss explodes → lower max_lr. If loss plateaus early → try higher max_lr or longer training.
 

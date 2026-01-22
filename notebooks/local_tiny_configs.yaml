@@ -1,0 +1,71 @@
+base: &base
+  vocab_size: 10000
+  special_tokens:
+    - "<|endoftext|>"
+  tokenizer_dir: ../tokenizers/tinystories/
+  train_file: ../tokenized/tinystories_train.npy
+  valid_file: ../tokenized/tinystories_valid.npy
+
+  batch_size: 32
+  model_settings: &base_model
+    vocab_size: 10000
+    d_model: 512
+    num_heads: 16
+    num_layers: 4
+    d_ff: 1344
+    context_length: 256
+    rope_theta: 10000
+
+  optimizer_lr: 1e-3
+  optimizer_betas:
+    - 0.9
+    - 0.999
+  optimizer_eps: 1e-08
+  optimizer_weight_decay: 1e-2
+
+  scheduler_lr_max: 1e-3
+  scheduler_lr_min: 1e-4
+  scheduler_warmup_iters: 100
+  scheduler_cos_iters: 1000
+
+  wandb_entity: jbmopper-0
+  log_project: cs336-a1
+  model: course rope-transformer
+  optimizer: course adamw
+  learning_schedule: course cosine anneal w/warmup
+  dataset: Tinystories
+  loss_func: cross-entropy
+  run_name: refactor
+
+  num_iters: 10
+  checkpoint_dir: ../checkpoints/
+
+  rand_seed: 0
+  gradient_clip: 1.0
+  save_every: 200
+  eval_every: 20
+
+no_norm:
+  <<: *base
+  model_settings:
+    <<: *base_model
+    norm_mode: none
+    final_norm: false
+
+post_norm:
+  <<: *base
+  model_settings:
+    <<: *base_model
+    norm_mode: post
+
+no_rope:
+  <<: *base
+  model_settings:
+    <<: *base_model
+    use_rope: false
+
+silu_ffn:
+  <<: *base
+  model_settings:
+    <<: *base_model
+    ffn_type: silu

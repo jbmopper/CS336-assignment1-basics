@@ -18,7 +18,7 @@ from .timer import timer
 class Trainer:
     """Manages model training, optimization, and logging."""
 
-    def __init__(self, model_class, config, tokens, valid_tokens):
+    def __init__(self, model_class, config, tokens, valid_tokens, wandb_run=None):
         """Initialize the Trainer.
 
         Args:
@@ -26,32 +26,46 @@ class Trainer:
             config: Configuration dictionary containing model_settings and other params
             tokens: Training token array
             valid_tokens: Validation token array
+            wandb_run: Optional existing Weights & Biases run
         """
-        self.model = model_class(**config["model_settings"]).to(config["device"])
-        if config["optimizer_use_defaults"]:
-            self.optimizer = AdamW(self.model.parameters())  # using defaults
-        else:
-            # TODO: optimizer call with parameters
-            pass
 
-        # hardcoding the wand B for now
-        wandb.login()
-        self.wandb_run = wandb.init(
-            entity=config["wandb_entity"],
-            project=config["log_project"],
-            name=config["run_name"],
-            config=config,
+        self.model = model_class(**config["model_settings"]).to(config["device"])
+        weight_decay = config.get("optimizer_weight_decay", 1e-2)
+        self.optimizer = AdamW(
+            self.model.parameters(),
+            lr=config.get("optimizer_lr", 1e-3),
+            betas=config.get("optimizer_betas", (0.9, 0.999)),
+            eps=config.get("optimizer_eps", 1e-8),
+            weight_decay=weight_decay,
         )
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        config["checkpoint_dir"] = config["checkpoint_dir"] + "_" + timestamp
+        # Allow caller (e.g., sweep) to provide an existing run.
+        if wandb_run is None:
+            wandb.login()
+            self.wandb_run = wandb.init(
+                entity=config["wandb_entity"],
+                project=config["log_project"],
+                name=config["run_name"],
+                config=config,
+            )
+        else:
+            self.wandb_run = wandb_run
+
+        if config.get("checkpoint_add_timestamp", True):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            config["checkpoint_dir"] = config["checkpoint_dir"] + "_" + timestamp
         os.makedirs(config["checkpoint_dir"], exist_ok=True)
         self.config = config
         self.tokens = tokens
         self.valid_tokens = valid_tokens
+        self.best_eval_loss = float("inf")
 
     def train_eval_loop(self):
         """Main training loop that orchestrates training and evaluation."""
+        save_every = self.config.get("save_every")
+        save_best = self.config.get("save_best", False)
+        save_final = self.config.get("save_final", False)
+
         for i in tqdm(range(self.config["num_iters"]), desc="Training Progress"):
             # Training step
             train_log = self._train_step(i)
@@ -61,6 +75,13 @@ class Trainer:
                 eval_log = self._eval_step(i)
                 train_log.update(eval_log)
 
+                eval_loss = eval_log.get("Eval loss")
+                if eval_loss is not None and eval_loss < self.best_eval_loss:
+                    self.best_eval_loss = eval_loss
+                    train_log["Best eval loss"] = eval_loss
+                    if save_best:
+                        self._save_best_checkpoint(i)
+
             # Log all metrics
             self.wandb_run.log(train_log, step=i)
 
@@ -68,9 +89,11 @@ class Trainer:
             self._save_latest_checkpoint(i)
 
             # Save snapshot checkpoint at save_every intervals
-            if i % self.config["save_every"] == 0:
+            if save_every is not None and i % save_every == 0:
                 self._save_snapshot_checkpoint(i)
 
+        if save_final:
+            self._save_final_checkpoint(self.config["num_iters"] - 1)
         self.wandb_run.finish()
 
     def _train_step(self, step):
@@ -127,10 +150,10 @@ class Trainer:
         # Optimizer step with LR schedule
         lr = get_lr_cosine_schedule(
             step,
-            self.config["lr_max"],
-            self.config["lr_min"],
-            self.config["warmup_iters"],
-            self.config["cos_iters"],
+            self.config.get("scheduler_lr_max", 1e-3),
+            self.config.get("scheduler_lr_min", 1e-4),
+            self.config.get("scheduler_warmup_iters", 0),
+            self.config.get("scheduler_cos_iters", 0),
         )
         log["LR"] = lr
 
@@ -146,23 +169,34 @@ class Trainer:
         """Perform evaluation on validation set. Returns dict of metrics to log."""
         log = {}
 
+        eval_batches = self.config.get("eval_batches", 1)
+        total_loss = 0.0
+
         with timer("Eval batch getting time", log):
             self.model.eval()
-            eval_inputs, eval_labels = get_batch(
-                self.valid_tokens,
-                self.config["batch_size"],
-                self.config["model_settings"]["context_length"],
-                self.config["device"],
-            )
+            eval_batches = max(1, int(eval_batches))
+            eval_inputs = []
+            eval_labels = []
+            for _ in range(eval_batches):
+                batch_inputs, batch_labels = get_batch(
+                    self.valid_tokens,
+                    self.config["batch_size"],
+                    self.config["model_settings"]["context_length"],
+                    self.config["device"],
+                )
+                eval_inputs.append(batch_inputs)
+                eval_labels.append(batch_labels)
 
         with timer("Eval forward pass time", log):
             with torch.no_grad():
-                eval_logits = self.model.forward(eval_inputs)
-                eval_loss = crossentropy(eval_logits, eval_labels)
-                eval_perplexity = math.exp(eval_loss.item())
+                for batch_inputs, batch_labels in zip(eval_inputs, eval_labels, strict=True):
+                    eval_logits = self.model.forward(batch_inputs)
+                    batch_loss = crossentropy(eval_logits, batch_labels)
+                    total_loss += batch_loss.item()
 
-        log["Eval loss"] = eval_loss.item()
-        log["Eval perplexity"] = eval_perplexity
+        avg_loss = total_loss / eval_batches
+        log["Eval loss"] = avg_loss
+        log["Eval perplexity"] = math.exp(avg_loss)
 
         return log
 
@@ -191,4 +225,30 @@ class Trainer:
                 self.config,
             )
         # Log snapshot save time
+        self.wandb_run.log(log, step=step)
+
+    def _save_best_checkpoint(self, step):
+        """Save best checkpoint based on eval loss."""
+        log = {}
+        with timer("Best checkpoint save time", log):
+            save_checkpoint(
+                self.model,
+                self.optimizer,
+                step,
+                f"{self.config['checkpoint_dir']}/best.pt",
+                self.config,
+            )
+        self.wandb_run.log(log, step=step)
+
+    def _save_final_checkpoint(self, step):
+        """Save final checkpoint after training."""
+        log = {}
+        with timer("Final checkpoint save time", log):
+            save_checkpoint(
+                self.model,
+                self.optimizer,
+                step,
+                f"{self.config['checkpoint_dir']}/final.pt",
+                self.config,
+            )
         self.wandb_run.log(log, step=step)
