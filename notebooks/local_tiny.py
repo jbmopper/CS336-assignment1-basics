@@ -1,7 +1,7 @@
 import marimo
 
 __generated_with = "0.19.4"
-app = marimo.App()
+app = marimo.App(width="full")
 
 
 @app.cell
@@ -184,164 +184,136 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    d_model = mo.ui.slider(128, 2048, step=128, value=512, label="d_model")
-    n_layers = mo.ui.slider(2, 48, step=1, value=12, label="n_layers")
-    lr = mo.ui.number(value=3e-4, step=1e-4, label="learning_rate")
-    dropout = mo.ui.slider(0.0, 0.5, step=0.01, value=0.1, label="dropout")
+    # Primary model hyperparameters (user inputs)
+    B = mo.ui.slider(1, 128, step=1, value=32, label="B (batch size)")
+    seq_len = mo.ui.slider(128, 4096, step=128, value=512, label="seq_len (context length)")
+    V = mo.ui.slider(1000, 100000, step=1000, value=50257, label="V (vocab size)")
+    d_model = mo.ui.slider(128, 2048, step=64, value=512, label="d_model")
+    n_heads = mo.ui.slider(1, 32, step=1, value=8, label="h (num_heads)")
+    n_blocks = mo.ui.slider(1, 48, step=1, value=12, label="n_blocks (layers)")
+    d_ff = mo.ui.slider(64, 6400, step=64, value=1344, label="d_ff (feed-forward dimension)")
 
-    controls2 = mo.vstack([d_model, n_layers, lr, dropout])
-    controls2
+    # Data types
+    wt_dtype = mo.ui.dropdown(["float32", "float16", "bfloat16", "float8"], value="float32", label="wt_dtype (weights)")
+    ft_dtype = mo.ui.dropdown(["float32", "float16", "bfloat16", "float8"], value="float32", label="ft_dtype (features)")
 
-
-    return d_model, dropout, lr, n_layers
-
-
-@app.cell
-def _(d_model, dropout, lr, mo, n_layers):
-    diagram2 = f"""
-    flowchart LR
-    A[Dataset] --> B[Tokenizer]
-    B --> C[Model<br/>d_model={d_model.value}<br/>n_layers={n_layers.value}<br/>dropout={dropout.value}]
-    C --> D[Train<br/>lr={lr.value}]
-    D --> E[Eval]
-    E --> F[Artifacts]
-    """
-    mo.mermaid(diagram2)
-    return
+    controls = mo.vstack([
+        mo.md("### Parameters and Adjustment"),
+        mo.hstack([B, seq_len, V]),
+        mo.hstack([d_model, n_heads, n_blocks]),
+        mo.hstack([d_ff, wt_dtype, ft_dtype]),
+    ])
+    controls
+    return B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype
 
 
 @app.cell
-def _(mo):
-    a = mo.ui.slider(0, 100, value=30, label="A (0-100)")
-    b = mo.ui.slider(0, 100, value=70, label="B (0-100)")
-    c = mo.ui.number(value=1.5, label="C (float)")
-    scale = mo.ui.slider(0.1, 5.0, value=1.0, step=0.1, label="Scale")
-    return a, b, c, scale
+def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
+    # Derived values
+    d_head = d_model.value // n_heads.value
+    # d_ff = d_ff.value
+    _3d_model = 3 * d_model.value
+
+    # Bytes per element
+    dtype_bytes = {"float32": 4, "float16": 2, "bfloat16": 2, "float8": 1}
+    wt_bytes = dtype_bytes[wt_dtype.value]
+    ft_bytes = dtype_bytes[ft_dtype.value]
+
+    # Size calculations
+    input_size = B.value * seq_len.value * 2  # int16
+    emb_size = V.value * d_model.value
+    ft_size = B.value * seq_len.value * d_model.value * ft_bytes
+    RMS_size = d_model.value * wt_bytes
+    wqkv_size = d_model.value * _3d_model * wt_bytes
+    qkv_size = B.value * seq_len.value * _3d_model * ft_bytes
+    head_size = B.value * n_heads.value * seq_len.value * d_head * ft_bytes
+    features_size = B.value * seq_len.value * d_model.value * ft_bytes
+    swiglu_size = 3 * d_model.value * d_ff.value * wt_bytes
+    lm_head_size = V.value * d_model.value * wt_bytes
+    output_size = B.value * seq_len.value * V.value * ft_bytes
+    o_size = d_model.value * d_model.value * wt_bytes
+
+    # total model size
+    per_block_size = RMS_size + wqkv_size + o_size + RMS_size + swiglu_size
+    total_weights = emb_size + per_block_size * n_blocks.value + RMS_size + head_size
+
+    # Compute estimates (FLOPs)
+    rms_norm_comp = 2 * B.value * seq_len.value * d_model.value
+    QKV_comp = 2 * B.value * seq_len.value * d_model.value * _3d_model
+    RoPE_comp = 2 * B.value * n_heads.value * seq_len.value * d_head
+    QK_compute = 2 * B.value * n_heads.value * seq_len.value * seq_len.value * d_head
+    softmax_compute = 3 * B.value * n_heads.value * seq_len.value * seq_len.value
+    SDPA_compute = QK_compute + softmax_compute + 2 * B.value * n_heads.value * seq_len.value * seq_len.value * d_head
+    swiglu_comp = 2 * B.value * seq_len.value * d_model.value * d_ff.value * 3
+    lm_comp = 2 * B.value * seq_len.value * d_model.value * V.value
+    o_proj_comp = B.value * seq_len.value * d_model.value * d_model.value
+
+    # Total forward pass: per-block ops * n_blocks + final rms_norm + lm_head
+    per_block_comp = 2*rms_norm_comp + QKV_comp + 2*RoPE_comp + SDPA_compute + o_proj_comp + swiglu_comp
+    total_forward = n_blocks.value * per_block_comp + rms_norm_comp + lm_comp
+
+    def fmt_size(b):
+        if b >= 1e9: return f"{b/1e9:.2f} GB"
+        if b >= 1e6: return f"{b/1e6:.2f} MB"
+        if b >= 1e3: return f"{b/1e3:.2f} KB"
+        return f"{b} B"
+
+    def fmt_flops(f):
+        if f >= 1e12: return f"{f/1e12:.2f} TFLOPs"
+        if f >= 1e9: return f"{f/1e9:.2f} GFLOPs"
+        if f >= 1e6: return f"{f/1e6:.2f} MFLOPs"
+        return f"{f:.0f} FLOPs"
+
+    # Return all values needed for SVG substitution
+    svg_vars = {
+        "B": B.value,
+        "seq_len": seq_len.value,
+        "V": V.value,
+        "d_model": d_model.value,
+        "h": n_heads.value,
+        "n_blocks": n_blocks.value,
+        "d_ff": d_ff.value,
+        "d_head": d_head,
+        "3d_model": _3d_model,
+        "wt_dtype": wt_dtype.value,
+        "ft_dtype": ft_dtype.value,
+        # Sizes (formatted)
+        "input_size": fmt_size(input_size),
+        "emb_size": fmt_size(emb_size),
+        "ft_size": fmt_size(ft_size),
+        "RMS_size": fmt_size(RMS_size),
+        "wqkv_size": fmt_size(wqkv_size),
+        "qkv_size": fmt_size(qkv_size),
+        "head_size": fmt_size(head_size),
+        "features_size": fmt_size(features_size),
+        "swiglu_size": fmt_size(swiglu_size),
+        "lm_head_size": fmt_size(lm_head_size),
+        "o_size": fmt_size(o_size),
+        "output_size": fmt_size(output_size),
+        "total_weights": fmt_size(total_weights),
+        # Compute (formatted)
+        "rms_norm_comp": fmt_flops(rms_norm_comp),
+        "QKV_comp": fmt_flops(QKV_comp),
+        "RoPE_comp": fmt_flops(RoPE_comp),
+        "QK_compute": fmt_flops(QK_compute),
+        "softmax_compute": fmt_flops(softmax_compute),
+        "SDPA_compute": fmt_flops(SDPA_compute),
+        "o_proj_comp": fmt_flops(o_proj_comp),
+        "swiglu_comp": fmt_flops(swiglu_comp),
+        "lm_comp": fmt_flops(lm_comp),
+        "total_forward": fmt_flops(total_forward),
+    }
+    return (svg_vars,)
 
 
 @app.cell
-def _(a, b, c, mo, scale):
-    weighted = (a.value * 0.6) + (b.value * 0.4)
-    coupled = (a.value - b.value) * c.value
-    blended = (weighted + coupled) * scale.value
-
-    controls = mo.vstack([a, b, c, scale])
-    outputs = mo.md(
-        f"""
-    **Inputs**
-    - A = {a.value}
-    - B = {b.value}
-    - C = {c.value}
-    - Scale = {scale.value}
-
-    **Outputs**
-    - Weighted(A,B) = 0.6*A + 0.4*B = {weighted:.2f}
-    - Coupled(A,B,C) = (A - B) * C = {coupled:.2f}
-    - Blended = (Weighted + Coupled) * Scale = {blended:.2f}
-    """
-    )
-
-    controls, weighted, coupled, blended
-    return
-
-
-@app.cell
-def _(mo):
-    diagram1 = '''
-
-    flowchart TB
-        subgraph Input
-            tokens["Input Tokens<br/>[batch, seq]"]
-        end
-
-        subgraph Embeddings
-            emb["Token Embedding<br/>weight: [vocab_size, d_model]"]
-        end
-
-        tokens --> emb
-        emb --> |"[batch, seq, d_model]"| block1
-
-        subgraph block1["Transformer Block ×N"]
-            direction TB
-        
-            subgraph attn_branch["Multi-Head Self-Attention"]
-                ln1["RMSNorm<br/>weight: [d_model]"]
-            
-                subgraph projections["QKV Projections"]
-                    qproj["W_Q: [d_model, d_model]"]
-                    kproj["W_K: [d_model, d_model]"]
-                    vproj["W_V: [d_model, d_model]"]
-                end
-            
-                split["Split into heads<br/>[batch, num_heads, seq, d_head]<br/>d_head = d_model / num_heads"]
-            
-                rope["RoPE<br/>cos/sin: [max_seq_len, d_head/2]"]
-            
-                sdpa["Scaled Dot-Product Attention<br/>QK^T/√d_k → softmax → ×V<br/>+ Causal Mask"]
-            
-                concat["Concat Heads<br/>[batch, seq, d_model]"]
-            
-                oproj["W_O: [d_model, d_model]"]
-            end
-        
-            res1(("+"))
-        
-            subgraph ffn_branch["SwiGLU FFN"]
-                ln2["RMSNorm<br/>weight: [d_model]"]
-                w1["W1: [d_ff, d_model]"]
-                w3["W3: [d_ff, d_model]"]
-                silu_act["SiLU(W1·x)"]
-                gate["⊙ (element-wise)"]
-                w2["W2: [d_model, d_ff]"]
-            end
-        
-            res2(("+"))
-        
-            ln1 --> projections
-            projections --> split
-            split --> rope
-            rope --> sdpa
-            sdpa --> concat
-            concat --> oproj
-            oproj --> res1
-        
-            res1 --> ln2
-            ln2 --> w1
-            ln2 --> w3
-            w1 --> silu_act
-            silu_act --> gate
-            w3 --> gate
-            gate --> w2
-            w2 --> res2
-        end
-
-        subgraph Output
-            final_ln["Final RMSNorm<br/>weight: [d_model]"]
-            lm_head["LM Head (Linear)<br/>weight: [vocab_size, d_model]"]
-            logits["Output Logits<br/>[batch, seq, vocab_size]"]
-        end
-
-        block1 --> |"[batch, seq, d_model]"| final_ln
-        final_ln --> lm_head
-        lm_head --> logits
-
-        %% Residual connections
-        emb -.->|residual| res1
-        res1 -.->|residual| res2
-    '''
-
-    mo.mermaid(diagram1)
-
-    return
-
-
-@app.cell
-def _(mo):
+def _(mo, svg_vars):
     with open("notebooks/cs336_forward.svg") as f:
         svg = f.read()
 
-
-    svg = svg.replace("{{B}}", str("5"))
+    # Substitute all template variables from svg_vars
+    for key, value in svg_vars.items():
+        svg = svg.replace(f"{{{{{key}}}}}", str(value))
 
     # inject font styling
     font_style = """
@@ -357,6 +329,51 @@ def _(mo):
     svg = svg.replace(">", f">{font_style}", 1)
 
     mo.Html(svg)
+    return
+
+
+@app.cell
+def _(mo, svg_vars):
+    mo.md(f"""
+    ### Computed Values
+
+    | Variable | Value |
+    |----------|-------|
+    | d_head | {svg_vars['d_head']} |
+    | 3·d_model | {svg_vars['3d_model']} |
+
+    ### Tensor Sizes
+
+    | Tensor | Size |
+    |--------|------|
+    | input_size (int16) | {svg_vars['input_size']} |
+    | ft_size [B,S,d_model] | {svg_vars['ft_size']} |
+    | RMS weights | {svg_vars['RMS_size']} |
+    | WQKV [d_model, 3·d_model] | {svg_vars['wqkv_size']} |
+    | QKV [B,S,3·d_model] | {svg_vars['qkv_size']} |
+    | head [B,h,S,d_head] | {svg_vars['head_size']} |
+    | O proj [d_model, d_model] | {svg_vars['o_size']} |
+    | features [B,S,d_model] | {svg_vars['features_size']} |
+    | swiglu weights | {svg_vars['swiglu_size']} |
+    | lm_head [V,d_model] | {svg_vars['lm_head_size']} |
+    | output [B,S,V] | {svg_vars['output_size']} |
+
+    ### Compute per Block
+
+    | Operation | FLOPs |
+    |-----------|-------|
+    | rms_norm_comp | {svg_vars['rms_norm_comp']} |
+    | QKV_comp | {svg_vars['QKV_comp']} |
+    | RoPE_comp | {svg_vars['RoPE_comp']} |
+    | SDPA_compute | {svg_vars['SDPA_compute']} |
+    | o_proj_comp | {svg_vars['o_proj_comp']} |
+    | swiglu_comp | {svg_vars['swiglu_comp']} |
+    | lm_comp | {svg_vars['lm_comp']} |
+
+    #### Forward Pass Totals
+    **Compute:** {svg_vars['total_forward']}  
+    **Weights:** {svg_vars['total_weights']}
+    """)
     return
 
 
