@@ -10,41 +10,6 @@ def _():
     return (mo,)
 
 
-@app.cell
-def _(mo):
-    a = mo.ui.slider(0, 100, value=30, label="A (0-100)")
-    b = mo.ui.slider(0, 100, value=70, label="B (0-100)")
-    c = mo.ui.number(value=1.5, label="C (float)")
-    scale = mo.ui.slider(0.1, 5.0, value=1.0, step=0.1, label="Scale")
-    return a, b, c, scale
-
-
-@app.cell
-def _(a, b, c, mo, scale):
-    weighted = (a.value * 0.6) + (b.value * 0.4)
-    coupled = (a.value - b.value) * c.value
-    blended = (weighted + coupled) * scale.value
-
-    controls = mo.vstack([a, b, c, scale])
-    outputs = mo.md(
-        f"""
-    **Inputs**
-    - A = {a.value}
-    - B = {b.value}
-    - C = {c.value}
-    - Scale = {scale.value}
-
-    **Outputs**
-    - Weighted(A,B) = 0.6*A + 0.4*B = {weighted:.2f}
-    - Coupled(A,B,C) = (A - B) * C = {coupled:.2f}
-    - Blended = (Weighted + Coupled) * Scale = {blended:.2f}
-    """
-    )
-
-    controls, weighted, coupled, blended
-    return
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -209,16 +174,199 @@ def _(mo):
     return
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(mo):
     mo.md(r"""
- 
+    # Architecture
     """)
     return
 
 
 @app.cell
-def _():
+def _(mo):
+    d_model = mo.ui.slider(128, 2048, step=128, value=512, label="d_model")
+    n_layers = mo.ui.slider(2, 48, step=1, value=12, label="n_layers")
+    lr = mo.ui.number(value=3e-4, step=1e-4, label="learning_rate")
+    dropout = mo.ui.slider(0.0, 0.5, step=0.01, value=0.1, label="dropout")
+
+    controls2 = mo.vstack([d_model, n_layers, lr, dropout])
+    controls2
+
+
+    return d_model, dropout, lr, n_layers
+
+
+@app.cell
+def _(d_model, dropout, lr, mo, n_layers):
+    diagram2 = f"""
+    flowchart LR
+    A[Dataset] --> B[Tokenizer]
+    B --> C[Model<br/>d_model={d_model.value}<br/>n_layers={n_layers.value}<br/>dropout={dropout.value}]
+    C --> D[Train<br/>lr={lr.value}]
+    D --> E[Eval]
+    E --> F[Artifacts]
+    """
+    mo.mermaid(diagram2)
+    return
+
+
+@app.cell
+def _(mo):
+    a = mo.ui.slider(0, 100, value=30, label="A (0-100)")
+    b = mo.ui.slider(0, 100, value=70, label="B (0-100)")
+    c = mo.ui.number(value=1.5, label="C (float)")
+    scale = mo.ui.slider(0.1, 5.0, value=1.0, step=0.1, label="Scale")
+    return a, b, c, scale
+
+
+@app.cell
+def _(a, b, c, mo, scale):
+    weighted = (a.value * 0.6) + (b.value * 0.4)
+    coupled = (a.value - b.value) * c.value
+    blended = (weighted + coupled) * scale.value
+
+    controls = mo.vstack([a, b, c, scale])
+    outputs = mo.md(
+        f"""
+    **Inputs**
+    - A = {a.value}
+    - B = {b.value}
+    - C = {c.value}
+    - Scale = {scale.value}
+
+    **Outputs**
+    - Weighted(A,B) = 0.6*A + 0.4*B = {weighted:.2f}
+    - Coupled(A,B,C) = (A - B) * C = {coupled:.2f}
+    - Blended = (Weighted + Coupled) * Scale = {blended:.2f}
+    """
+    )
+
+    controls, weighted, coupled, blended
+    return
+
+
+@app.cell
+def _(mo):
+    diagram1 = '''
+
+    flowchart TB
+        subgraph Input
+            tokens["Input Tokens<br/>[batch, seq]"]
+        end
+
+        subgraph Embeddings
+            emb["Token Embedding<br/>weight: [vocab_size, d_model]"]
+        end
+
+        tokens --> emb
+        emb --> |"[batch, seq, d_model]"| block1
+
+        subgraph block1["Transformer Block ×N"]
+            direction TB
+        
+            subgraph attn_branch["Multi-Head Self-Attention"]
+                ln1["RMSNorm<br/>weight: [d_model]"]
+            
+                subgraph projections["QKV Projections"]
+                    qproj["W_Q: [d_model, d_model]"]
+                    kproj["W_K: [d_model, d_model]"]
+                    vproj["W_V: [d_model, d_model]"]
+                end
+            
+                split["Split into heads<br/>[batch, num_heads, seq, d_head]<br/>d_head = d_model / num_heads"]
+            
+                rope["RoPE<br/>cos/sin: [max_seq_len, d_head/2]"]
+            
+                sdpa["Scaled Dot-Product Attention<br/>QK^T/√d_k → softmax → ×V<br/>+ Causal Mask"]
+            
+                concat["Concat Heads<br/>[batch, seq, d_model]"]
+            
+                oproj["W_O: [d_model, d_model]"]
+            end
+        
+            res1(("+"))
+        
+            subgraph ffn_branch["SwiGLU FFN"]
+                ln2["RMSNorm<br/>weight: [d_model]"]
+                w1["W1: [d_ff, d_model]"]
+                w3["W3: [d_ff, d_model]"]
+                silu_act["SiLU(W1·x)"]
+                gate["⊙ (element-wise)"]
+                w2["W2: [d_model, d_ff]"]
+            end
+        
+            res2(("+"))
+        
+            ln1 --> projections
+            projections --> split
+            split --> rope
+            rope --> sdpa
+            sdpa --> concat
+            concat --> oproj
+            oproj --> res1
+        
+            res1 --> ln2
+            ln2 --> w1
+            ln2 --> w3
+            w1 --> silu_act
+            silu_act --> gate
+            w3 --> gate
+            gate --> w2
+            w2 --> res2
+        end
+
+        subgraph Output
+            final_ln["Final RMSNorm<br/>weight: [d_model]"]
+            lm_head["LM Head (Linear)<br/>weight: [vocab_size, d_model]"]
+            logits["Output Logits<br/>[batch, seq, vocab_size]"]
+        end
+
+        block1 --> |"[batch, seq, d_model]"| final_ln
+        final_ln --> lm_head
+        lm_head --> logits
+
+        %% Residual connections
+        emb -.->|residual| res1
+        res1 -.->|residual| res2
+    '''
+
+    mo.mermaid(diagram1)
+
+    return
+
+
+@app.cell
+def _(mo):
+    with open("notebooks/cs336_forward.svg") as f:
+        svg = f.read()
+
+
+    svg = svg.replace("{{B}}", str("5"))
+
+    # inject font styling
+    font_style = """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+
+    text {
+      font-family: "Inter", system-ui, -apple-system, sans-serif;
+    }
+    </style>
+    """
+
+    svg = svg.replace(">", f">{font_style}", 1)
+
+    mo.Html(svg)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Benchmarks
+
+    Next we can review the training class we've made:
+    """)
     return
 
 
@@ -244,14 +392,6 @@ def _(np):
 
     valid_tokens = np.load(config["valid_file"], mmap_mode='r')
     print(f"Validation tokens loaded from {config['valid_file']}, shape {valid_tokens.shape}.")
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    Next we can review the training class we've made:
-    """)
     return
 
 
