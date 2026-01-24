@@ -185,26 +185,34 @@ def _(mo):
 @app.cell
 def _(mo):
     # Primary model hyperparameters (user inputs)
-    B = mo.ui.slider(1, 128, step=1, value=32, label="B (batch size)")
-    seq_len = mo.ui.slider(128, 4096, step=128, value=512, label="seq_len (context length)")
-    V = mo.ui.slider(1000, 100000, step=1000, value=50257, label="V (vocab size)")
-    d_model = mo.ui.slider(128, 2048, step=64, value=512, label="d_model")
-    n_heads = mo.ui.slider(1, 32, step=1, value=8, label="h (num_heads)")
-    n_blocks = mo.ui.slider(1, 48, step=1, value=12, label="n_blocks (layers)")
-    d_ff = mo.ui.slider(64, 6400, step=64, value=1344, label="d_ff (feed-forward dimension)")
+    B = mo.ui.slider(1, 128, step=1, value=32, label="B (batch size)", show_value=True)
+    seq_len = mo.ui.slider(128, 4096, step=128, value=512, label="seq_len (context length)", show_value=True)
+    V = mo.ui.slider(1000, 100000, step=1000, value=10000, label="V (vocab size)", show_value=True)
+    d_model = mo.ui.slider(128, 2048, step=64, value=512, label="d_model", show_value=True)
+    n_heads = mo.ui.slider(1, 32, step=1, value=8, label="h (num_heads)", show_value=True)
+    n_blocks = mo.ui.slider(1, 48, step=1, value=12, label="n_blocks (layers)", show_value=True)
+    d_ff = mo.ui.slider(64, 6400, step=64, value=1344, label="d_ff (feed-forward dim)", show_value=True)
 
     # Data types
     wt_dtype = mo.ui.dropdown(["float32", "float16", "bfloat16", "float8"], value="float32", label="wt_dtype (weights)")
     ft_dtype = mo.ui.dropdown(["float32", "float16", "bfloat16", "float8"], value="float32", label="ft_dtype (features)")
 
     controls = mo.vstack([
-        mo.md("### Parameters and Adjustment"),
-        mo.hstack([B, seq_len, V]),
-        mo.hstack([d_model, n_heads, n_blocks]),
-        mo.hstack([d_ff, wt_dtype, ft_dtype]),
+        mo.md("### Model Parameters"),
+        mo.hstack([B, seq_len, V], justify="start", gap=2),
+        mo.hstack([d_model, n_heads, n_blocks], justify="start", gap=2),
+        mo.hstack([d_ff, wt_dtype, ft_dtype], justify="start", gap=2),
     ])
     controls
     return B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype
+
+
+@app.cell
+def _(d_model, mo, n_heads):
+    mo.md(f"""
+    **Derived:** d_head = {d_model.value // n_heads.value}
+    """)
+    return
 
 
 @app.cell
@@ -221,7 +229,7 @@ def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
 
     # Size calculations
     input_size = B.value * seq_len.value * 2  # int16
-    emb_size = V.value * d_model.value
+    emb_size = V.value * d_model.value * wt_bytes
     ft_size = B.value * seq_len.value * d_model.value * ft_bytes
     RMS_size = d_model.value * wt_bytes
     wqkv_size = d_model.value * _3d_model * wt_bytes
@@ -235,7 +243,7 @@ def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
 
     # total model size
     per_block_size = RMS_size + wqkv_size + o_size + RMS_size + swiglu_size
-    total_weights = emb_size + per_block_size * n_blocks.value + RMS_size + head_size
+    total_weights = emb_size + per_block_size * n_blocks.value + RMS_size + lm_head_size
 
     # Compute estimates (FLOPs)
     rms_norm_comp = 2 * B.value * seq_len.value * d_model.value
@@ -246,7 +254,7 @@ def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
     SDPA_compute = QK_compute + softmax_compute + 2 * B.value * n_heads.value * seq_len.value * seq_len.value * d_head
     swiglu_comp = 2 * B.value * seq_len.value * d_model.value * d_ff.value * 3
     lm_comp = 2 * B.value * seq_len.value * d_model.value * V.value
-    o_proj_comp = B.value * seq_len.value * d_model.value * d_model.value
+    o_proj_comp = 2 * B.value * seq_len.value * d_model.value * d_model.value
 
     # Total forward pass: per-block ops * n_blocks + final rms_norm + lm_head
     per_block_comp = 2*rms_norm_comp + QKV_comp + 2*RoPE_comp + SDPA_compute + o_proj_comp + swiglu_comp
