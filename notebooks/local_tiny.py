@@ -7,7 +7,10 @@ app = marimo.App(width="full")
 @app.cell
 def _():
     import marimo as mo
-    return (mo,)
+    from cs336_basics.nn import scaled_dot_product_attention
+    import torch.utils.benchmark as benchmark
+    import torch
+    return (mo, scaled_dot_product_attention, benchmark, torch,)
 
 
 @app.cell(hide_code=True)
@@ -236,12 +239,13 @@ def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
     qkv_size = B.value * seq_len.value * _3d_model * ft_bytes
     head_size = B.value * n_heads.value * seq_len.value * d_head * ft_bytes
     features_size = B.value * seq_len.value * d_model.value * ft_bytes
+    sp_size = B.value * n_heads.value * seq_len.value ** 2 * ft_bytes
     swiglu_size = 3 * d_model.value * d_ff.value * wt_bytes
     lm_head_size = V.value * d_model.value * wt_bytes
     output_size = B.value * seq_len.value * V.value * ft_bytes
     o_size = d_model.value * d_model.value * wt_bytes
 
-    # total model size
+    # total model size (weights)
     per_block_size = RMS_size + wqkv_size + o_size + RMS_size + swiglu_size
     total_weights = emb_size + per_block_size * n_blocks.value + RMS_size + lm_head_size
 
@@ -297,6 +301,7 @@ def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
         "swiglu_size": fmt_size(swiglu_size),
         "lm_head_size": fmt_size(lm_head_size),
         "o_size": fmt_size(o_size),
+        "sp_size": fmt_size(sp_size),
         "output_size": fmt_size(output_size),
         "total_weights": fmt_size(total_weights),
         # Compute (formatted)
@@ -312,32 +317,6 @@ def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
         "total_forward": fmt_flops(total_forward),
     }
     return (svg_vars,)
-
-
-@app.cell
-def _(mo, svg_vars):
-    with open("notebooks/cs336_forward.svg") as f:
-        svg = f.read()
-
-    # Substitute all template variables from svg_vars
-    for key, value in svg_vars.items():
-        svg = svg.replace(f"{{{{{key}}}}}", str(value))
-
-    # inject font styling
-    font_style = """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
-
-    text {
-      font-family: "Inter", system-ui, -apple-system, sans-serif;
-    }
-    </style>
-    """
-
-    svg = svg.replace(">", f">{font_style}", 1)
-
-    mo.Html(svg)
-    return
 
 
 @app.cell
@@ -360,6 +339,7 @@ def _(mo, svg_vars):
     | WQKV [d_model, 3·d_model] | {svg_vars['wqkv_size']} |
     | QKV [B,S,3·d_model] | {svg_vars['qkv_size']} |
     | head [B,h,S,d_head] | {svg_vars['head_size']} |
+    | attention [B,h,S,S] | {svg_vars['sp_size']}
     | O proj [d_model, d_model] | {svg_vars['o_size']} |
     | features [B,S,d_model] | {svg_vars['features_size']} |
     | swiglu weights | {svg_vars['swiglu_size']} |
@@ -385,13 +365,75 @@ def _(mo, svg_vars):
     return
 
 
+@app.cell
+def _(mo):
+    svg_zoom = mo.ui.slider(25, 150, step=5, value=50, label="Zoom %", show_value=True)
+    svg_zoom
+    return (svg_zoom,)
+
+
+@app.cell
+def _(mo, svg_vars, svg_zoom):
+    with open("notebooks/cs336_forward.svg") as f:
+        svg = f.read()
+
+    # Substitute all template variables from svg_vars
+    for key, value in svg_vars.items():
+        svg = svg.replace(f"{{{{{key}}}}}", str(value))
+
+    # inject font styling into the SVG
+    font_style = """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+    text {
+      font-family: "Inter", system-ui, -apple-system, sans-serif;
+    }
+    </style>
+    """
+    svg = svg.replace(">", f">{font_style}", 1)
+
+    # Wrap in a scrollable container with zoom
+    zoom_pct = svg_zoom.value
+    container_html = f"""
+    <div style="
+        width: 100%;
+        height: 600px;
+        overflow: auto;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        background: #fafafa;
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+    ">
+        <div style="
+            transform: scale({zoom_pct / 100});
+            transform-origin: top left;
+            padding: 16px;
+        ">
+            {svg}
+        </div>
+    </div>
+    """
+
+    mo.Html(container_html)
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Benchmarks
+    # Targeted Benchmarks
 
-    Next we can review the training class we've made:
+    Now that we know what parts of the model are likely to cause bottlenecks, we can run some targeted benchmarks to assess where certain variables become problematic on our architecture
+
+    ## Sequence length
+
+    The attention mechanism involves a cacluation which scales quadratically with sequence length.  We expect that performance will quicly degrade after some critical sequence length.
     """)
+    return
+
+
+@app.cell
+def _():
     return
 
 
