@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 import argparse
 
-def main(args):
+def main():
     # scaled_dot_product_attention()
     # the sdpa function take sthe Q, K, and V projection tensors
     # these are the inputs multiplied by the concatenated weights
@@ -85,4 +85,4 @@ def main(args):
     compare.colorize().print()
 
 if __name__ == "__main__":
-    main(args)
+    main()
