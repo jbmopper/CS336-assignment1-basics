@@ -82,7 +82,8 @@ def main():
 
 
     compare = benchmark.Compare(results)
-    compare.colorize().print()
+    compare.colorize()
+    compare.print()
 
 if __name__ == "__main__":
     main()
