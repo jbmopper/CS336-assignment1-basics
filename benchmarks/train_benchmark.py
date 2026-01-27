@@ -84,20 +84,21 @@ def main():
     args = parser.parse_args()
 
     # Define sweep parameters
+    # d_head is the grid variable; n_heads = d_model / d_head
     if args.smol:
         batch_sizes = [8, 16, 32]
         seq_lens = [256, 512]
         d_models = [256, 512]
-        num_heads_list = [4, 8]
+        d_heads = [32, 64]  # d_head as grid variable
         num_layers_list = [4, 8]
         d_ffs = [1024, 2048]
     else:
         batch_sizes = [8, 16, 32, 48, 64, 80]
         seq_lens = [256, 512, 768, 1024]
-        d_models = [256, 512, 768]
-        num_heads_list = [4, 8, 16]
-        num_layers_list = [4, 8, 12]
-        d_ffs = [640, 2048, 3072]
+        d_models = [256, 384, 512, 640, 768]
+        d_heads = [32, 64, 96, 128]  # d_head as grid variable
+        num_layers_list = [8, 10,12, 14, 16]
+        d_ffs = [640, 704, 1024, 1344, 1728, 2048]
 
     # Load data
     if args.data == "tinystories":
@@ -116,15 +117,18 @@ def main():
 
     # Generate all configs
     all_configs = []
-    for B, S, d, h, L, dff in product(
-        batch_sizes, seq_lens, d_models, num_heads_list, num_layers_list, d_ffs
+    for B, S, d, dh, L, dff in product(
+        batch_sizes, seq_lens, d_models, d_heads, num_layers_list, d_ffs
     ):
-        # Skip invalid configs (d_model must be divisible by num_heads)
-        if d % h != 0:
-            continue
+        # Compute n_heads from d_model and d_head
+        if d % dh != 0:
+            continue  # d_model must be divisible by d_head
+        n_heads = d // dh
+        if n_heads < 1:
+            continue  # need at least 1 head
         
         # Estimate memory and skip if too large
-        est_mem = estimate_memory_gb(B, S, d, h, L, dff)
+        est_mem = estimate_memory_gb(B, S, d, n_heads, L, dff)
         if est_mem > args.max_memory_gb:
             continue
         
@@ -132,7 +136,8 @@ def main():
             "batch_size": B,
             "seq_len": S,
             "d_model": d,
-            "num_heads": h,
+            "d_head": dh,
+            "num_heads": n_heads,  # computed from d_model / d_head
             "num_layers": L,
             "d_ff": dff,
             "est_memory_gb": est_mem,
@@ -146,7 +151,7 @@ def main():
 
     for i, cfg in enumerate(all_configs):
         label = "train_step"
-        sublabel = f"B={cfg['batch_size']}, S={cfg['seq_len']}, d={cfg['d_model']}, h={cfg['num_heads']}, L={cfg['num_layers']}, dff={cfg['d_ff']}"
+        sublabel = f"B={cfg['batch_size']}, S={cfg['seq_len']}, d={cfg['d_model']}, dh={cfg['d_head']}, h={cfg['num_heads']}, L={cfg['num_layers']}, dff={cfg['d_ff']}"
         
         print(f"\n[{i+1}/{len(all_configs)}] {sublabel} (est. {cfg['est_memory_gb']:.1f} GB)")
         
@@ -157,7 +162,7 @@ def main():
                 batch_size=cfg["batch_size"],
                 seq_len=cfg["seq_len"],
                 d_model=cfg["d_model"],
-                num_heads=cfg["num_heads"],
+                num_heads=cfg["num_heads"],  # pass computed num_heads
                 num_layers=cfg["num_layers"],
                 d_ff=cfg["d_ff"],
                 device=args.device,
@@ -269,11 +274,11 @@ def main():
         
         print(f"\nFastest config ({fastest['median_s']*1000:.1f} ms/step):")
         print(f"  B={fastest['batch_size']}, S={fastest['seq_len']}, d={fastest['d_model']}, "
-              f"h={fastest['num_heads']}, L={fastest['num_layers']}, dff={fastest['d_ff']}")
+              f"dh={fastest['d_head']}, h={fastest['num_heads']}, L={fastest['num_layers']}, dff={fastest['d_ff']}")
         
         print(f"\nHighest throughput ({most_throughput['tokens_per_sec']:.0f} tok/s):")
         print(f"  B={most_throughput['batch_size']}, S={most_throughput['seq_len']}, d={most_throughput['d_model']}, "
-              f"h={most_throughput['num_heads']}, L={most_throughput['num_layers']}, dff={most_throughput['d_ff']}")
+              f"dh={most_throughput['d_head']}, h={most_throughput['num_heads']}, L={most_throughput['num_layers']}, dff={most_throughput['d_ff']}")
 
 
 if __name__ == "__main__":
