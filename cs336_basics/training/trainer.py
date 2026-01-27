@@ -16,17 +16,69 @@ from .timer import timer
 
 
 class Trainer:
-    """Manages model training, optimization, and logging."""
+    """Manages model training, optimization, and logging.
+    
+    Expected config dictionary structure:
+    
+    Required keys:
+        model_settings (dict): Kwargs passed to model_class.__init__. Must include:
+            - vocab_size (int): Vocabulary size
+            - d_model (int): Model dimension
+            - num_heads (int): Number of attention heads
+            - num_layers (int): Number of transformer blocks
+            - d_ff (int): Feed-forward hidden dimension
+            - context_length (int): Maximum sequence length
+            - rope_theta (float): RoPE theta parameter
+        device (str): Device to train on ("cpu", "cuda", "mps")
+        batch_size (int): Training batch size
+        num_iters (int): Total training iterations
+        eval_every (int): Evaluate every N iterations
+        gradient_clip (float): Max gradient L2 norm for clipping
+        checkpoint_dir (str): Directory to save checkpoints
+    
+    Optional keys (with defaults):
+        # W&B logging (all optional - if wandb_entity not provided, logging is disabled)
+        wandb_entity (str): W&B entity/username (default: None, disables W&B)
+        log_project (str): W&B project name (required if wandb_entity set)
+        run_name (str): W&B run name (required if wandb_entity set)
+        
+        # Optimizer
+        optimizer_lr (float): Learning rate (default: 1e-3)
+        optimizer_betas (tuple): Adam betas (default: (0.9, 0.999))
+        optimizer_eps (float): Adam epsilon (default: 1e-8)
+        optimizer_weight_decay (float): Weight decay (default: 1e-2)
+        
+        # LR Schedule (cosine with warmup)
+        scheduler_lr_max (float): Max LR after warmup (default: 1e-3)
+        scheduler_lr_min (float): Min LR at end of cosine (default: 1e-4)
+        scheduler_warmup_iters (int): Warmup iterations (default: 0)
+        scheduler_cos_iters (int): Cosine decay iterations (default: 0)
+        
+        # Checkpointing
+        checkpoint_add_timestamp (bool): Append timestamp to checkpoint_dir (default: True)
+        save_every (int): Save snapshot every N iters (default: None)
+        save_best (bool): Save best checkpoint by eval loss (default: False)
+        save_final (bool): Save final checkpoint (default: False)
+        
+        # Evaluation
+        eval_batches (int): Number of batches for evaluation (default: 1)
+    
+    Memory considerations:
+        Peak training memory ≈ weights + activations + gradients
+        - Activations scale as O(batch_size × context_length × d_model × num_layers)
+        - Attention matrices scale as O(batch_size × num_heads × context_length²)
+        - For 24GB RAM, typical safe configs: batch_size≤32, context_length≤512
+    """
 
     def __init__(self, model_class, config, tokens, valid_tokens, wandb_run=None):
         """Initialize the Trainer.
 
         Args:
             model_class: The model class to instantiate (e.g., TransformerLM)
-            config: Configuration dictionary containing model_settings and other params
-            tokens: Training token array
-            valid_tokens: Validation token array
-            wandb_run: Optional existing Weights & Biases run
+            config: Configuration dictionary (see class docstring for required/optional keys)
+            tokens: Training token array (numpy array of token IDs)
+            valid_tokens: Validation token array (numpy array of token IDs)
+            wandb_run: Optional existing Weights & Biases run (for sweep integration)
         """
 
         self.model = model_class(**config["model_settings"]).to(config["device"])
@@ -39,8 +91,12 @@ class Trainer:
             weight_decay=weight_decay,
         )
 
-        # Allow caller (e.g., sweep) to provide an existing run.
-        if wandb_run is None:
+        # W&B logging is optional - only initialize if wandb_entity is provided
+        self.use_wandb = config.get("wandb_entity") is not None
+        if wandb_run is not None:
+            self.wandb_run = wandb_run
+            self.use_wandb = True
+        elif self.use_wandb:
             wandb.login()
             self.wandb_run = wandb.init(
                 entity=config["wandb_entity"],
@@ -49,7 +105,7 @@ class Trainer:
                 config=config,
             )
         else:
-            self.wandb_run = wandb_run
+            self.wandb_run = None
 
         if config.get("checkpoint_add_timestamp", True):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -59,6 +115,16 @@ class Trainer:
         self.tokens = tokens
         self.valid_tokens = valid_tokens
         self.best_eval_loss = float("inf")
+
+    def _log(self, metrics, step):
+        """Log metrics to W&B if enabled."""
+        if self.use_wandb and self.wandb_run is not None:
+            self.wandb_run.log(metrics, step=step)
+
+    def _finish(self):
+        """Finish W&B run if enabled."""
+        if self.use_wandb and self.wandb_run is not None:
+            self.wandb_run.finish()
 
     def train_eval_loop(self):
         """Main training loop that orchestrates training and evaluation."""
@@ -83,7 +149,7 @@ class Trainer:
                         self._save_best_checkpoint(i)
 
             # Log all metrics
-            self.wandb_run.log(train_log, step=i)
+            self._log(train_log, step=i)
 
             # Save latest checkpoint every iteration (for crash recovery)
             self._save_latest_checkpoint(i)
@@ -94,7 +160,7 @@ class Trainer:
 
         if save_final:
             self._save_final_checkpoint(self.config["num_iters"] - 1)
-        self.wandb_run.finish()
+        self._finish()
 
     def _train_step(self, step):
         """Perform a single training step. Returns dict of metrics to log."""
@@ -225,7 +291,7 @@ class Trainer:
                 self.config,
             )
         # Log snapshot save time
-        self.wandb_run.log(log, step=step)
+        self._log(log, step=step)
 
     def _save_best_checkpoint(self, step):
         """Save best checkpoint based on eval loss."""
@@ -238,7 +304,7 @@ class Trainer:
                 f"{self.config['checkpoint_dir']}/best.pt",
                 self.config,
             )
-        self.wandb_run.log(log, step=step)
+        self._log(log, step=step)
 
     def _save_final_checkpoint(self, step):
         """Save final checkpoint after training."""
@@ -251,4 +317,4 @@ class Trainer:
                 f"{self.config['checkpoint_dir']}/final.pt",
                 self.config,
             )
-        self.wandb_run.log(log, step=step)
+        self._log(log, step=step)
