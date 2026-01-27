@@ -92,12 +92,12 @@ def main():
         num_layers_list = [4, 8]
         d_ffs = [1024, 2048]
     else:
-        batch_sizes = [8, 16, 32, 64]
+        batch_sizes = [8, 16, 32, 48, 64, 80]
         seq_lens = [256, 512, 768, 1024]
         d_models = [256, 512, 768]
         num_heads_list = [4, 8, 16]
         num_layers_list = [4, 8, 12]
-        d_ffs = [1024, 2048, 3072]
+        d_ffs = [640, 2048, 3072]
 
     # Load data
     if args.data == "tinystories":

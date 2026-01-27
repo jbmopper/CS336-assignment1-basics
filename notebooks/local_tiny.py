@@ -187,14 +187,19 @@ def _(mo):
 
 @app.cell
 def _(mo):
+    import math as _math
+
     # Primary model hyperparameters (user inputs)
     B = mo.ui.slider(1, 128, step=1, value=32, label="B (batch size)", show_value=True)
     seq_len = mo.ui.slider(128, 4096, step=128, value=512, label="seq_len (context length)", show_value=True)
     V = mo.ui.slider(1000, 100000, step=1000, value=10000, label="V (vocab size)", show_value=True)
     d_model = mo.ui.slider(128, 2048, step=64, value=512, label="d_model", show_value=True)
-    n_heads = mo.ui.slider(1, 32, step=1, value=8, label="h (num_heads)", show_value=True)
+    d_head = mo.ui.slider(32, 128, step=32, value=64, label="d_head", show_value=True)
     n_blocks = mo.ui.slider(1, 48, step=1, value=12, label="n_blocks (layers)", show_value=True)
-    d_ff = mo.ui.slider(64, 6400, step=64, value=1344, label="d_ff (feed-forward dim)", show_value=True)
+    d_ff_slider = mo.ui.slider(64, 6400, step=64, value=1344, label="d_ff (manual)", show_value=True)
+
+    # Toggle for locking d_ff to 8/3 * d_model (SwiGLU standard ratio)
+    lock_d_ff = mo.ui.checkbox(value=True, label="Lock d_ff = ⌈8/3 × d_model⌉₆₄")
 
     # Data types
     wt_dtype = mo.ui.dropdown(["float32", "float16", "bfloat16", "float8"], value="float32", label="wt_dtype (weights)")
@@ -207,27 +212,64 @@ def _(mo):
     controls = mo.vstack([
         mo.md("### Model Parameters"),
         mo.hstack([B, seq_len, V], justify="start", gap=2),
-        mo.hstack([d_model, n_heads, n_blocks], justify="start", gap=2),
-        mo.hstack([d_ff, wt_dtype, ft_dtype], justify="start", gap=2),
+        mo.hstack([d_model, d_head, n_blocks], justify="start", gap=2),
+        mo.hstack([lock_d_ff, d_ff_slider, wt_dtype, ft_dtype], justify="start", gap=2),
         mo.hstack([max_ram_gb, train_steps], justify="start", gap=2),
     ])
     controls
-    return B, V, d_ff, d_model, ft_dtype, max_ram_gb, n_blocks, n_heads, seq_len, train_steps, wt_dtype
+    return (
+        B,
+        V,
+        d_ff_slider,
+        d_head,
+        d_model,
+        ft_dtype,
+        lock_d_ff,
+        max_ram_gb,
+        n_blocks,
+        seq_len,
+        train_steps,
+        wt_dtype,
+    )
 
 
 @app.cell
-def _(d_model, mo, n_heads):
+def _(d_ff_slider, d_model, lock_d_ff):
+    import math as _math
+
+    # Compute d_ff: either locked to 8/3 * d_model (rounded up to multiple of 64) or manual
+    if lock_d_ff.value:
+        # SwiGLU standard: d_ff ≈ 8/3 * d_model, rounded up to nearest multiple of 64
+        _raw_d_ff = d_model.value * 8 / 3
+        d_ff = _math.ceil(_raw_d_ff / 64) * 64
+    else:
+        d_ff = d_ff_slider.value
+    return (d_ff,)
+
+
+@app.cell
+def _(d_head, d_model):
+    # Compute n_heads from d_model and d_head
+    n_heads = d_model.value // d_head.value
+    _remainder = d_model.value % d_head.value
+    n_heads_valid = _remainder == 0
+    return (n_heads, n_heads_valid)
+
+
+@app.cell
+def _(d_ff, d_head, d_model, lock_d_ff, mo, n_heads, n_heads_valid):
+    _lock_status = f"**locked** = ⌈8/3 × {d_model.value}⌉₆₄ = {d_ff}" if lock_d_ff.value else f"manual = {d_ff}"
+    _valid_status = "" if n_heads_valid else " ⚠️ **d_model not divisible by d_head!**"
     mo.md(f"""
-    **Derived:** d_head = {d_model.value // n_heads.value}
+    **Derived:** n_heads = {d_model.value} / {d_head.value} = {n_heads}{_valid_status}, d_ff ({_lock_status})
     """)
     return
 
 
 @app.cell
-def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
-    # Derived values
-    d_head = d_model.value // n_heads.value
-    # d_ff = d_ff.value
+def _(B, V, d_ff, d_head, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
+    # d_head is now a slider input, n_heads is computed
+    _d_head = d_head.value
     _3d_model = 3 * d_model.value
 
     # Bytes per element
@@ -242,10 +284,10 @@ def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
     RMS_size = d_model.value * wt_bytes
     wqkv_size = d_model.value * _3d_model * wt_bytes
     qkv_size = B.value * seq_len.value * _3d_model * ft_bytes
-    head_size = B.value * n_heads.value * seq_len.value * d_head * ft_bytes
+    head_size = B.value * n_heads * seq_len.value * _d_head * ft_bytes  # n_heads is computed int
     features_size = B.value * seq_len.value * d_model.value * ft_bytes
-    sp_size = B.value * n_heads.value * seq_len.value ** 2 * ft_bytes
-    swiglu_size = 3 * d_model.value * d_ff.value * wt_bytes
+    sp_size = B.value * n_heads * seq_len.value ** 2 * ft_bytes  # n_heads is computed int
+    swiglu_size = 3 * d_model.value * d_ff * wt_bytes  # d_ff is now a computed int
     lm_head_size = V.value * d_model.value * wt_bytes
     output_size = B.value * seq_len.value * V.value * ft_bytes
     o_size = d_model.value * d_model.value * wt_bytes
@@ -257,11 +299,11 @@ def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
     # Compute estimates (FLOPs)
     rms_norm_comp = 2 * B.value * seq_len.value * d_model.value
     QKV_comp = 2 * B.value * seq_len.value * d_model.value * _3d_model
-    RoPE_comp = 2 * B.value * n_heads.value * seq_len.value * d_head
-    QK_compute = 2 * B.value * n_heads.value * seq_len.value * seq_len.value * d_head
-    softmax_compute = 3 * B.value * n_heads.value * seq_len.value * seq_len.value
-    SDPA_compute = QK_compute + softmax_compute + 2 * B.value * n_heads.value * seq_len.value * seq_len.value * d_head
-    swiglu_comp = 2 * B.value * seq_len.value * d_model.value * d_ff.value * 3
+    RoPE_comp = 2 * B.value * n_heads * seq_len.value * _d_head  # n_heads is computed int
+    QK_compute = 2 * B.value * n_heads * seq_len.value * seq_len.value * _d_head  # n_heads is computed int
+    softmax_compute = 3 * B.value * n_heads * seq_len.value * seq_len.value  # n_heads is computed int
+    SDPA_compute = QK_compute + softmax_compute + 2 * B.value * n_heads * seq_len.value * seq_len.value * _d_head
+    swiglu_comp = 2 * B.value * seq_len.value * d_model.value * d_ff * 3  # d_ff is now a computed int
     lm_comp = 2 * B.value * seq_len.value * d_model.value * V.value
     o_proj_comp = 2 * B.value * seq_len.value * d_model.value * d_model.value
 
@@ -287,10 +329,10 @@ def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
         "seq_len": seq_len.value,
         "V": V.value,
         "d_model": d_model.value,
-        "h": n_heads.value,
+        "h": n_heads,  # n_heads is now a computed int
         "n_blocks": n_blocks.value,
-        "d_ff": d_ff.value,
-        "d_head": d_head,
+        "d_ff": d_ff,  # d_ff is now a computed int
+        "d_head": _d_head,
         "3d_model": _3d_model,
         "wt_dtype": wt_dtype.value,
         "ft_dtype": ft_dtype.value,
@@ -325,7 +367,7 @@ def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
 
 
 @app.cell
-def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
+def _(B, V, d_ff, d_head, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
     """
     Comprehensive memory accounting for training (forward + backward).
 
@@ -341,10 +383,10 @@ def _(B, V, d_ff, d_model, ft_dtype, n_blocks, n_heads, seq_len, wt_dtype):
     _S = seq_len.value
     _V = V.value
     _d = d_model.value
-    _h = n_heads.value
+    _h = n_heads  # n_heads is now a computed int
     _L = n_blocks.value
-    _dff = d_ff.value
-    _dh = _d // _h  # head dimension
+    _dff = d_ff  # d_ff is now a computed int
+    _dh = d_head.value  # d_head is now a slider input
 
     # =========================================================================
     # WEIGHTS (stored once, always in memory)
@@ -587,90 +629,90 @@ def _(B, budget_calc, memory_accounting, mo, seq_len, training_stats):
     _chinchilla_status = "✅" if training_stats['chinchilla_ratio'] >= 1.0 else "⚠️"
 
     _left_panel = mo.md(f"""
-## Training Memory Accounting
+    ## Training Memory Accounting
 
-### Peak Memory Estimates
+    ### Peak Memory Estimates
 
-| Phase | Memory |
-|-------|--------|
-| **Peak (end of fwd / start of bwd)** | {memory_accounting['peak_training']} |
-| **Steady state** (weights + optim + grad) | {memory_accounting['steady_state']} |
+    | Phase | Memory |
+    |-------|--------|
+    | **Peak (end of fwd / start of bwd)** | {memory_accounting['peak_training']} |
+    | **Steady state** (weights + optim + grad) | {memory_accounting['steady_state']} |
 
-### Summary
+    ### Summary
 
-| Category | Size |
-|----------|------|
-| **Weights** | {memory_accounting['total_weights']} |
-| **Forward Activations** (saved for backward) | {memory_accounting['total_fwd_activations']} |
-| **Gradients** (same as weights) | {memory_accounting['total_gradients']} |
-| **Optimizer State** (AdamW: 2× weights) | {memory_accounting['optimizer_state']} |
+    | Category | Size |
+    |----------|------|
+    | **Weights** | {memory_accounting['total_weights']} |
+    | **Forward Activations** (saved for backward) | {memory_accounting['total_fwd_activations']} |
+    | **Gradients** (same as weights) | {memory_accounting['total_gradients']} |
+    | **Optimizer State** (AdamW: 2× weights) | {memory_accounting['optimizer_state']} |
 
-### S² Memory Breakdown
+    ### S² Memory Breakdown
 
-- **Total S² memory** (all blocks): {memory_accounting['s_squared_memory']}
-- **Attention matrices per block**: {memory_accounting['attention_matrices_per_block']}
-- 5 tensors of [B, h, S, S] per block for softmax
+    - **Total S² memory** (all blocks): {memory_accounting['s_squared_memory']}
+    - **Attention matrices per block**: {memory_accounting['attention_matrices_per_block']}
+    - 5 tensors of [B, h, S, S] per block for softmax
     """)
 
     _middle_panel = mo.md(f"""
-## Budget Calculator
+    ## Budget Calculator
 
-### Status: {_status}{_overage}
+    ### Status: {_status}{_overage}
 
-| | |
-|---|---|
-| **Budget** | {budget_calc['budget_gb']} GB |
-| **Peak** | {memory_accounting['peak_training']} |
+    | | |
+    |---|---|
+    | **Budget** | {budget_calc['budget_gb']} GB |
+    | **Peak** | {memory_accounting['peak_training']} |
 
-### Fixed Costs
+    ### Fixed Costs
 
-| | |
-|---|---|
-| **Weights + Gradients** | {budget_calc['fixed_cost']} |
-| **Available for activations** | {budget_calc['headroom_for_activations']} |
+    | | |
+    |---|---|
+    | **Weights + Gradients** | {budget_calc['fixed_cost']} |
+    | **Available for activations** | {budget_calc['headroom_for_activations']} |
 
-### Maximum Values (within budget)
+    ### Maximum Values (within budget)
 
-| Parameter | Max | Current |
-|-----------|-----|---------|
-| **Batch (B)** | {budget_calc['max_B_at_current_S']} | {B.value} |
-| **Seq len (S)** | {budget_calc['max_S_at_B32']} | {seq_len.value} |
+    | Parameter | Max | Current |
+    |-----------|-----|---------|
+    | **Batch (B)** | {budget_calc['max_B_at_current_S']} | {B.value} |
+    | **Seq len (S)** | {budget_calc['max_S_at_B32']} | {seq_len.value} |
 
-*(Max B at current S; Max S at B=32)*
+    *(Max B at current S; Max S at B=32)*
     """)
 
     _right_panel = mo.md(f"""
-## Training Efficiency
+    ## Training Efficiency
 
-### Model Size
+    ### Model Size
 
-| | |
-|---|---|
-| **Parameters** | {training_stats['total_params_fmt']} |
-| **Steps** | {training_stats['train_steps']:,} |
+    | | |
+    |---|---|
+    | **Parameters** | {training_stats['total_params_fmt']} |
+    | **Steps** | {training_stats['train_steps']:,} |
 
-### Tokens
+    ### Tokens
 
-| | |
-|---|---|
-| **Per step** | {training_stats['tokens_per_step_fmt']} |
-| **Total** | {training_stats['total_tokens_fmt']} |
+    | | |
+    |---|---|
+    | **Per step** | {training_stats['tokens_per_step_fmt']} |
+    | **Total** | {training_stats['total_tokens_fmt']} |
 
-### Compute
+    ### Compute
 
-| | |
-|---|---|
-| **Est. FLOPs** | {training_stats['total_flops_fmt']} |
+    | | |
+    |---|---|
+    | **Est. FLOPs** | {training_stats['total_flops_fmt']} |
 
-### Chinchilla Scaling {_chinchilla_status}
+    ### Chinchilla Scaling {_chinchilla_status}
 
-| | |
-|---|---|
-| **Optimal tokens** | {training_stats['chinchilla_tokens_fmt']} |
-| **Your tokens** | {training_stats['total_tokens_fmt']} |
-| **Ratio** | {training_stats['chinchilla_pct']} |
+    | | |
+    |---|---|
+    | **Optimal tokens** | {training_stats['chinchilla_tokens_fmt']} |
+    | **Your tokens** | {training_stats['total_tokens_fmt']} |
+    | **Ratio** | {training_stats['chinchilla_pct']} |
 
-*Chinchilla: train on ~20× params tokens*
+    *Chinchilla: train on ~20× params tokens*
     """)
 
     mo.hstack([_left_panel, _middle_panel, _right_panel], justify="start", gap=3, widths=[1, 1, 1])
@@ -681,6 +723,7 @@ def _(B, budget_calc, memory_accounting, mo, seq_len, training_stats):
 def _(
     V,
     d_ff,
+    d_head,
     d_model,
     ft_dtype,
     max_ram_gb,
@@ -708,10 +751,10 @@ def _(
 
     _V = V.value
     _d = d_model.value
-    _h = n_heads.value
+    _h = n_heads  # n_heads is now a computed int
     _L = n_blocks.value
-    _dff = d_ff.value
-    _dh = _d // _h
+    _dff = d_ff  # d_ff is now a computed int
+    _dh = d_head.value  # d_head is now a slider input
     _S = seq_len.value
 
     _budget_bytes = max_ram_gb.value * 1e9
