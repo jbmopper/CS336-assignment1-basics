@@ -35,6 +35,11 @@ def make_config(batch_size, seq_len, d_model, num_heads, num_layers, d_ff, devic
         "num_iters": 1,  # Not used for direct _train_step benchmark
         "eval_every": 999999,
         "gradient_clip": 1.0,
+        # LR schedule - need non-zero values to avoid division by zero
+        "scheduler_lr_max": 1e-3,
+        "scheduler_lr_min": 1e-4,
+        "scheduler_warmup_iters": 1,  # Must be > 0
+        "scheduler_cos_iters": 1000,
         # No wandb_entity = no W&B logging
     }
 
