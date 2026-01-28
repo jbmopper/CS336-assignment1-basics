@@ -33,6 +33,9 @@ echo "Estimated disk: ~2-4 GB total"
 echo "============================================================"
 echo ""
 
+# Get the actual python path so xctrace can follow it (uv run spawns a child)
+PYTHON_EXE=$(uv run python -c "import sys; print(sys.executable)")
+
 # Profile Model A
 echo "[1/2] Profiling Model A..."
 echo "      Output: ${TRACE_DIR}/model_a_${TIMESTAMP}_metal.trace"
@@ -41,8 +44,9 @@ echo ""
 xcrun xctrace record \
     --output "${TRACE_DIR}/model_a_${TIMESTAMP}_metal.trace" \
     --template 'Metal System Trace' \
+    --template 'Time Profiler' \
     --time-limit "$TIME_LIMIT" \
-    --launch -- uv run python -m benchmarks.profile_training \
+    --launch -- "$PYTHON_EXE" -m benchmarks.profile_training \
         --model A \
         --num-steps "$NUM_STEPS" \
         --trace-dir "$TRACE_DIR"
@@ -62,8 +66,9 @@ echo ""
 xcrun xctrace record \
     --output "${TRACE_DIR}/model_b_${TIMESTAMP}_metal.trace" \
     --template 'Metal System Trace' \
+    --template 'Time Profiler' \
     --time-limit "$TIME_LIMIT" \
-    --launch -- uv run python -m benchmarks.profile_training \
+    --launch -- "$PYTHON_EXE" -m benchmarks.profile_training \
         --model B \
         --num-steps "$NUM_STEPS" \
         --trace-dir "$TRACE_DIR"

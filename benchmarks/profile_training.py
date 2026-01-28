@@ -69,8 +69,8 @@ MODEL_B_CONFIG = {
 }
 
 
-def get_trainer_config(model_config: dict, device: str) -> dict:
-    """Create a minimal trainer config for profiling (no W&B, no checkpointing)."""
+def get_trainer_config(model_config: dict, device: str, checkpoint_dir: str = "/tmp/profile_checkpoints") -> dict:
+    """Create a minimal trainer config for profiling (no W&B)."""
     return {
         "model_settings": model_config["model_settings"],
         "device": device,
@@ -83,8 +83,8 @@ def get_trainer_config(model_config: dict, device: str) -> dict:
         "scheduler_lr_min": 1e-4,
         "scheduler_warmup_iters": 1,
         "scheduler_cos_iters": 1000,
-        # No checkpointing
-        "checkpoint_dir": "/tmp/profile_checkpoints",
+        # Checkpointing
+        "checkpoint_dir": checkpoint_dir,
         "checkpoint_add_timestamp": False,
         # No W&B
     }
@@ -142,7 +142,7 @@ def profile_model(
             pass
     
     # Create trainer
-    trainer_config = get_trainer_config(model_config, device)
+    trainer_config = get_trainer_config(model_config, device, checkpoint_dir=os.path.join(trace_dir, "checkpoints"))
     trainer = Trainer(TransformerLM, trainer_config, tokens, valid_tokens)
     
     # Calculate model stats
@@ -176,8 +176,6 @@ def profile_model(
     activities = [torch.profiler.ProfilerActivity.CPU]
     if device == "cuda":
         activities.append(torch.profiler.ProfilerActivity.CUDA)
-    # Note: MPS doesn't have a dedicated ProfilerActivity, but CPU profiling 
-    # still captures MPS dispatch overhead
     
     # Profile with torch.profiler
     with torch.profiler.profile(
@@ -194,7 +192,9 @@ def profile_model(
         with_stack=True,
     ) as prof:
         for step in range(num_steps):
-            trainer._train_step(step + 5)  # Continue from after warmup
+            trainer._train_step(step + 5)
+            # Include checkpointing in the profile to see real-world overhead
+            trainer._save_latest_checkpoint(step + 5)
             prof.step()
     
     # Export chrome trace
