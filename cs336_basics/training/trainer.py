@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from datetime import datetime
 
 import torch
@@ -115,6 +116,7 @@ class Trainer:
         self.tokens = tokens
         self.valid_tokens = valid_tokens
         self.best_eval_loss = float("inf")
+        self.start_time = time.perf_counter()
 
     def _log(self, metrics, step):
         """Log metrics to W&B if enabled."""
@@ -141,18 +143,19 @@ class Trainer:
                 eval_log = self._eval_step(i)
                 train_log.update(eval_log)
 
-                eval_loss = eval_log.get("Eval loss")
+                eval_loss = eval_log.get("Eval/Loss")
                 if eval_loss is not None and eval_loss < self.best_eval_loss:
                     self.best_eval_loss = eval_loss
-                    train_log["Best eval loss"] = eval_loss
+                    train_log["Eval/Best loss"] = eval_loss
                     if save_best:
                         self._save_best_checkpoint(i)
 
+            # Save latest checkpoint every iteration (for crash recovery)
+            checkpoint_log = self._save_latest_checkpoint(i)
+            train_log.update(checkpoint_log)
+
             # Log all metrics
             self._log(train_log, step=i)
-
-            # Save latest checkpoint every iteration (for crash recovery)
-            self._save_latest_checkpoint(i)
 
             # Save snapshot checkpoint at save_every intervals
             if save_every is not None and i % save_every == 0:
@@ -165,15 +168,10 @@ class Trainer:
     def _train_step(self, step):
         """Perform a single training step. Returns dict of metrics to log."""
         log = {}
-
-        # Device sync for benchmarking
-        if self.config["device"] == "mps":
-            torch.mps.synchronize()
-        elif self.config["device"] == "cuda":
-            torch.cuda.synchronize()
+        step_start = time.perf_counter()
 
         # Get batch
-        with timer("Batch getting time", log):
+        with timer("Time/Batch getting", log):
             inputs, labels = get_batch(
                 self.tokens,
                 self.config["batch_size"],
@@ -182,12 +180,12 @@ class Trainer:
             )
 
         # Forward pass
-        with timer("Forward pass time", log):
+        with timer("Time/Forward", log):
             self.model.train()
             out_logits = self.model.forward(inputs)
 
         # Loss calculation
-        with timer("Loss calc time", log):
+        with timer("Time/Loss calc", log):
             loss = crossentropy(out_logits, labels)
             perplexity = math.exp(loss.item())
 
@@ -195,19 +193,21 @@ class Trainer:
         log["Perplexity"] = perplexity
 
         # Backward pass
-        with timer("Backwards pass time", log):
+        with timer("Time/Backward", log):
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
 
-        # Gradient clipping
-        with timer("Grad calc time", log):
+        # Gradient clipping - calculating norm forces a sync
+        with timer("Time/Grad norm calc", log):
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(),
                 max_norm=float("inf"),
             )
-        log["Grad norm"] = grad_norm.item()
+        
+        log["Grad/Norm (unclipped)"] = grad_norm.item()
+        log["Grad/Norm (clipped)"] = min(grad_norm.item(), self.config["gradient_clip"])
 
-        with timer("Grad clip time", log):
+        with timer("Time/Grad clip", log):
             gradient_clipping(
                 self.model.parameters(),
                 self.config["gradient_clip"],
@@ -226,8 +226,29 @@ class Trainer:
         for param_group in self.optimizer.param_groups:
             param_group["lr"] = lr
 
-        with timer("Optimizer step time", log):
+        with timer("Time/Optimizer step", log):
             self.optimizer.step()
+
+        # Efficient timing: one synchronization at the end of the step
+        if self.config["device"] == "mps":
+            torch.mps.synchronize()
+        elif self.config["device"] == "cuda":
+            torch.cuda.synchronize()
+            
+        total_step_time = time.perf_counter() - step_start
+        log["Time/Total step"] = total_step_time
+        
+        tokens_per_step = self.config["batch_size"] * self.config["model_settings"]["context_length"]
+        log["Throughput/Tokens per sec"] = tokens_per_step / total_step_time
+        log["Time/Cumulative (min)"] = (time.perf_counter() - self.start_time) / 60.0
+
+        if self.config["device"] == "cuda":
+            log["Memory/Max allocated (GB)"] = torch.cuda.max_memory_allocated() / 1e9
+        elif self.config["device"] == "mps":
+            try:
+                log["Memory/Current allocated (GB)"] = torch.mps.current_allocated_memory() / 1e9
+            except (AttributeError, RuntimeError):
+                pass
 
         return log
 
@@ -238,7 +259,7 @@ class Trainer:
         eval_batches = self.config.get("eval_batches", 1)
         total_loss = 0.0
 
-        with timer("Eval batch getting time", log):
+        with timer("Time/Eval batch getting", log):
             self.model.eval()
             eval_batches = max(1, int(eval_batches))
             eval_inputs = []
@@ -253,7 +274,7 @@ class Trainer:
                 eval_inputs.append(batch_inputs)
                 eval_labels.append(batch_labels)
 
-        with timer("Eval forward pass time", log):
+        with timer("Time/Eval forward pass", log):
             with torch.no_grad():
                 for batch_inputs, batch_labels in zip(eval_inputs, eval_labels, strict=True):
                     eval_logits = self.model.forward(batch_inputs)
@@ -261,15 +282,15 @@ class Trainer:
                     total_loss += batch_loss.item()
 
         avg_loss = total_loss / eval_batches
-        log["Eval loss"] = avg_loss
-        log["Eval perplexity"] = math.exp(avg_loss)
+        log["Eval/Loss"] = avg_loss
+        log["Eval/Perplexity"] = math.exp(avg_loss)
 
         return log
 
     def _save_latest_checkpoint(self, step):
         """Save latest checkpoint (for crash recovery)."""
         log = {}
-        with timer("Checkpoint save time", log):
+        with timer("Time/Checkpoint save (latest)", log):
             save_checkpoint(
                 self.model,
                 self.optimizer,
@@ -277,12 +298,12 @@ class Trainer:
                 f"{self.config['checkpoint_dir']}/latest.pt",
                 self.config,
             )
-        # Note: checkpoint save time will be logged in the next iteration's train_step
+        return log
 
     def _save_snapshot_checkpoint(self, step):
         """Save snapshot checkpoint at save_every intervals."""
         log = {}
-        with timer("Snapshot checkpoint save time", log):
+        with timer("Time/Checkpoint save (snapshot)", log):
             save_checkpoint(
                 self.model,
                 self.optimizer,
@@ -296,7 +317,7 @@ class Trainer:
     def _save_best_checkpoint(self, step):
         """Save best checkpoint based on eval loss."""
         log = {}
-        with timer("Best checkpoint save time", log):
+        with timer("Time/Checkpoint save (best)", log):
             save_checkpoint(
                 self.model,
                 self.optimizer,
@@ -309,7 +330,7 @@ class Trainer:
     def _save_final_checkpoint(self, step):
         """Save final checkpoint after training."""
         log = {}
-        with timer("Final checkpoint save time", log):
+        with timer("Time/Checkpoint save (final)", log):
             save_checkpoint(
                 self.model,
                 self.optimizer,
