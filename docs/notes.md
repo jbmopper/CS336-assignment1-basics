@@ -158,3 +158,48 @@ I have selected two models from the `train_benchmark_20260127_092323.json` sweep
 ### Hypothesis for TinyStories
 
 For a dataset like TinyStories, which features simple grammar but specific vocabulary and character facts, **Setting B** (the wide FFN) may outperform Setting A. The "reasoning" required for these stories is often shallower than the need to store associations and common patterns.
+
+---
+
+## Summary and Comparison
+
+### All Proposed Models
+
+| Source | Model | d_model | L | d_ff | FFN Ratio | Parameters | Throughput |
+|--------|-------|---------|---|------|-----------|------------|------------|
+| Original | Model A | 640 | 10 | 1024 | 1.6× | 48.9M | ~3,850 tok/s |
+| Original | Model B | 384 | 12 | 1728 | 4.5× | 38.7M | ~3,900 tok/s |
+| Opinion 1 | Standard FFN | 384 | 10 | 2048 | 5.3× | 37.2M | ~4,323 tok/s |
+| Opinion 1 | Wide-Attention | 512 | 12 | 704 | 1.4× | 35.8M | ~4,377 tok/s |
+| Opinion 2 | Model C | 640 | 12 | 1728 | 2.7× | 72.3M | ~2,646 tok/s |
+| Opinion 2 | Model D | 768 | 10 | 2048 | 2.7× | 86.2M | ~2,652 tok/s |
+| Opinion 3 | Setting A | 512 | 14 | 640 | 1.25× | 38.7M | ~3,875 tok/s |
+| Opinion 3 | Setting B | 512 | 10 | 1728 | 3.4× | 47.3M | ~3,850 tok/s |
+
+### Estimated Training Time (5000 iterations)
+
+| Source | Model | batch_size | seq_len | sec/step | **Time (5000 iters)** | Total Tokens |
+|--------|-------|------------|---------|----------|----------------------|--------------|
+| Original | Model A | 64 | 256 | 4.26s | **5.9 hours** | 82M |
+| Original | Model B | 48 | 256 | 3.15s | **4.4 hours** | 61M |
+| Opinion 1 | Standard FFN | 48 | 256 | 2.84s | **3.9 hours** | 61M |
+| Opinion 1 | Wide-Attention | 64 | 256 | 3.75s | **5.2 hours** | 82M |
+| Opinion 2 | Model C | 48 | 256 | 4.65s | **6.5 hours** | 61M |
+| Opinion 2 | Model D | 48 | 256 | 4.63s | **6.4 hours** | 61M |
+| Opinion 3 | Setting A | 32 | 256 | 2.11s | **2.9 hours** | 41M |
+| Opinion 3 | Setting B | 32 | 256 | 2.13s | **3.0 hours** | 41M |
+
+### Notes on Fair Comparison
+
+- **Wall-clock matching**: Opinion 2 and Opinion 3 pairs are well-matched on throughput
+- **Token count varies**: Different batch sizes mean different total tokens at 5000 iters
+- **For equal-token comparison**: Scale iterations proportionally (e.g., B=32 needs 2× iters to match B=64)
+
+### Key Trade-offs by Pair
+
+| Comparison | Primary Variable | Parameter Difference |
+|------------|------------------|---------------------|
+| Original (A vs B) | FFN ratio (confounded with depth) | A has 27% more |
+| Opinion 1 | FFN ratio (cleaner isolation) | ~4% difference |
+| Opinion 2 | Width vs Depth (matched FFN ratio) | D has 19% more |
+| Opinion 3 | Depth vs FFN capacity | B has 22% more |
