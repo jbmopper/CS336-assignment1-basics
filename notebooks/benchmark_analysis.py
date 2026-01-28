@@ -392,7 +392,7 @@ def _(filtered_df, mo, px):
         color="d_model",
         size="batch_size",
         hover_data=_hover_cols,
-        title="Throughput vs Estimated Memory",
+        title="Throughput vs Estimated Memory (click/box-select points to compare)",
         labels={
             "est_memory_gb": "Estimated Memory (GB)",
             "tokens_per_sec": "Throughput (tokens/sec)",
@@ -401,8 +401,86 @@ def _(filtered_df, mo, px):
             "ffn_ratio": "FFN Ratio",
         },
     )
-    _fig.update_layout(height=500)
-    _fig
+    _fig.update_layout(
+        height=500,
+        dragmode="select",  # Enable box selection by default
+    )
+    # Wrap in mo.ui.plotly for interactivity
+    throughput_chart = mo.ui.plotly(_fig)
+    throughput_chart
+    return (throughput_chart,)
+
+
+@app.cell
+def _(filtered_df, mo, pl, throughput_chart):
+    # Get selected points from the chart
+    # mo.ui.plotly returns actual data values, not indices
+    _raw_value = throughput_chart.value
+    _output = None
+    
+    if not _raw_value or not isinstance(_raw_value, list) or len(_raw_value) == 0:
+        _output = mo.md("*Box-select points on the chart above to compare configurations.*")
+    elif filtered_df.is_empty():
+        _output = mo.md("*No data available.*")
+    else:
+        # Selection contains actual data values - match by unique config columns
+        # Map from plotly labels back to dataframe column names
+        _label_to_col = {
+            "Estimated Memory (GB)": "est_memory_gb",
+            "Throughput (tokens/sec)": "tokens_per_sec",
+            "Parameters (M)": "num_params_M",
+            "FFN Ratio": "ffn_ratio",
+        }
+        
+        # Build filter to find matching rows
+        # Use config columns that uniquely identify each row
+        _match_cols = ["batch_size", "seq_len", "d_model", "d_head", "num_heads", "num_layers", "d_ff"]
+        
+        _matched_df = filtered_df.clone()
+        _match_exprs = []
+        
+        for point in _raw_value:
+            # Build an expression that matches this specific point
+            _point_conditions = []
+            for col in _match_cols:
+                if col in point and col in filtered_df.columns:
+                    _point_conditions.append(pl.col(col) == point[col])
+            
+            if _point_conditions:
+                # Combine all conditions for this point with AND
+                _expr = _point_conditions[0]
+                for cond in _point_conditions[1:]:
+                    _expr = _expr & cond
+                _match_exprs.append(_expr)
+        
+        if _match_exprs:
+            # Combine all point matches with OR
+            _combined = _match_exprs[0]
+            for expr in _match_exprs[1:]:
+                _combined = _combined | expr
+            
+            _selected_df = filtered_df.filter(_combined)
+            
+            # Select display columns
+            _compare_cols = [
+                "batch_size", "seq_len", "d_model", "d_head", "num_heads",
+                "num_layers", "d_ff", "tokens_per_sec", "median_ms", "est_memory_gb",
+            ]
+            if "num_params_M" in filtered_df.columns:
+                _compare_cols.append("num_params_M")
+            if "ffn_ratio" in filtered_df.columns:
+                _compare_cols.append("ffn_ratio")
+            
+            _selected_df = _selected_df.select([c for c in _compare_cols if c in _selected_df.columns])
+            
+            _output = mo.vstack([
+                mo.md(f"### Selected Configurations ({len(_selected_df)} points)"),
+                mo.ui.table(_selected_df),
+            ])
+        else:
+            _output = mo.md("*Could not match selected points to data.*")
+    
+    _output
     return
 
 
