@@ -84,7 +84,8 @@ class TransformerBlock(nn.Module):
             self.attn = Multihead(self.num_heads, self.d_model)
 
     def forward(self, in_features: Float[Tensor, "... seq d_model"]) -> Float[Tensor, "... seq d_model"]:
-        token_positions = torch.arange(in_features.size(-2), device=in_features.device, dtype=torch.long)
+        with torch.profiler.record_function("## TRANSFORMER_BLOCK_FORWARD ##"):
+            token_positions = torch.arange(in_features.size(-2), device=in_features.device, dtype=torch.long)
 
         if self.norm_mode == "pre":
             norm1 = self.ln1.forward(in_features)
@@ -167,11 +168,12 @@ class TransformerLM(nn.Module):
         self.token_embeddings = Embedding(vocab_size, d_model)
 
     def forward(self, in_indices: Int[Tensor, "batch seq"]) -> Float[Tensor, "batch seq vocab"]:
-        x = self.token_embeddings.forward(in_indices)
-        for layer in self.layers:
-            x = layer.forward(x)
-        x = self.ln_final.forward(x)
-        return self.lm_head.forward(x)
+        with torch.profiler.record_function("## TRANSFORMER_LM_FORWARD ##"):
+            x = self.token_embeddings.forward(in_indices)
+            for layer in self.layers:
+                x = layer.forward(x)
+            x = self.ln_final.forward(x)
+            return self.lm_head.forward(x)
 
 
 def get_batch(

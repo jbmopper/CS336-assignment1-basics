@@ -171,47 +171,53 @@ class Trainer:
         step_start = time.perf_counter()
 
         # Get batch
-        with timer("Time/Batch getting", log):
-            inputs, labels = get_batch(
-                self.tokens,
-                self.config["batch_size"],
-                self.config["model_settings"]["context_length"],
-                self.config["device"],
-            )
+        with torch.profiler.record_function("## BATCH_GET ##"):
+            with timer("Time/Batch getting", log):
+                inputs, labels = get_batch(
+                    self.tokens,
+                    self.config["batch_size"],
+                    self.config["model_settings"]["context_length"],
+                    self.config["device"],
+                )
 
         # Forward pass
-        with timer("Time/Forward", log):
-            self.model.train()
-            out_logits = self.model.forward(inputs)
+        with torch.profiler.record_function("## FORWARD ##"):
+            with timer("Time/Forward", log):
+                self.model.train()
+                out_logits = self.model.forward(inputs)
 
         # Loss calculation
-        with timer("Time/Loss calc", log):
-            loss = crossentropy(out_logits, labels)
-            perplexity = math.exp(loss.item())
+        with torch.profiler.record_function("## LOSS_CALC ##"):
+            with timer("Time/Loss calc", log):
+                loss = crossentropy(out_logits, labels)
+                perplexity = math.exp(loss.item())
 
         log["Loss"] = loss.item()
         log["Perplexity"] = perplexity
 
         # Backward pass
-        with timer("Time/Backward", log):
-            self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
+        with torch.profiler.record_function("## BACKWARD ##"):
+            with timer("Time/Backward", log):
+                self.optimizer.zero_grad(set_to_none=True)
+                loss.backward()
 
         # Gradient clipping - calculating norm forces a sync
-        with timer("Time/Grad norm calc", log):
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.model.parameters(),
-                max_norm=float("inf"),
-            )
+        with torch.profiler.record_function("## GRAD_NORM ##"):
+            with timer("Time/Grad norm calc", log):
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    max_norm=float("inf"),
+                )
         
         log["Grad/Norm (unclipped)"] = grad_norm.item()
         log["Grad/Norm (clipped)"] = min(grad_norm.item(), self.config["gradient_clip"])
 
-        with timer("Time/Grad clip", log):
-            gradient_clipping(
-                self.model.parameters(),
-                self.config["gradient_clip"],
-            )
+        with torch.profiler.record_function("## GRAD_CLIP ##"):
+            with timer("Time/Grad clip", log):
+                gradient_clipping(
+                    self.model.parameters(),
+                    self.config["gradient_clip"],
+                )
 
         # Optimizer step with LR schedule
         lr = get_lr_cosine_schedule(
@@ -226,8 +232,9 @@ class Trainer:
         for param_group in self.optimizer.param_groups:
             param_group["lr"] = lr
 
-        with timer("Time/Optimizer step", log):
-            self.optimizer.step()
+        with torch.profiler.record_function("## OPTIMIZER_STEP ##"):
+            with timer("Time/Optimizer step", log):
+                self.optimizer.step()
 
         # Efficient timing: one synchronization at the end of the step
         if self.config["device"] == "mps":
