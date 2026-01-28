@@ -100,8 +100,38 @@ def _(Path, file_selector, json, no_files_value, pl):
     # Add computed columns (only if data is present)
     if len(df) > 0:
         computed_cols = []
-        if {"d_model", "num_heads"}.issubset(df.columns):
-            computed_cols.append((pl.col("d_model") * pl.col("num_heads")).alias("total_params_proxy"))
+        # Total parameter count (vocab_size=10000 is fixed in benchmark)
+        if {"d_model", "num_layers", "d_ff"}.issubset(df.columns):
+            vocab_size = 10000
+            computed_cols.append(
+                (
+                    2 * vocab_size * pl.col("d_model") +  # embeddings + LM head
+                    pl.col("d_model") +  # final RMSNorm
+                    pl.col("num_layers") * (
+                        2 * pl.col("d_model") +  # 2 RMSNorms per layer
+                        4 * pl.col("d_model") * pl.col("d_model") +  # Q, K, V, O
+                        3 * pl.col("d_model") * pl.col("d_ff")  # SwiGLU FFN
+                    )
+                ).alias("num_params")
+            )
+            # Also add millions for readability
+            computed_cols.append(
+                (
+                    (
+                        2 * vocab_size * pl.col("d_model") +
+                        pl.col("d_model") +
+                        pl.col("num_layers") * (
+                            2 * pl.col("d_model") +
+                            4 * pl.col("d_model") * pl.col("d_model") +
+                            3 * pl.col("d_model") * pl.col("d_ff")
+                        )
+                    ) / 1e6
+                ).alias("num_params_M")
+            )
+            # FFN expansion ratio (important architectural metric)
+            computed_cols.append(
+                (pl.col("d_ff") / pl.col("d_model")).alias("ffn_ratio")
+            )
         if "median_s" in df.columns:
             computed_cols.append((pl.col("median_s") * 1000).alias("median_ms"))
         if {"batch_size", "seq_len"}.issubset(df.columns):
@@ -119,6 +149,10 @@ def _(df, metadata, mo):
     if df.is_empty():
         mo.stop(True, mo.md("No data loaded."))
 
+    param_range = ""
+    if "num_params_M" in df.columns:
+        param_range = f"- **Parameter range**: {df['num_params_M'].min():.1f}M – {df['num_params_M'].max():.1f}M"
+
     mo.md(f"""
     ## Dataset Overview
 
@@ -126,6 +160,7 @@ def _(df, metadata, mo):
     - **Device**: {metadata.get("device", "N/A")}
     - **Timestamp**: {metadata.get("timestamp", "N/A")}
     - **Total configs tested**: {len(df)}
+    {param_range}
     - **Batch sizes**: {sorted(df['batch_size'].unique().to_list()) if 'batch_size' in df.columns else []}
     - **Sequence lengths**: {sorted(df['seq_len'].unique().to_list()) if 'seq_len' in df.columns else []}
     - **d_model values**: {sorted(df['d_model'].unique().to_list()) if 'd_model' in df.columns else []}
@@ -188,27 +223,63 @@ def _(df, mo):
             label="d_ff",
         )
 
-    mo.hstack(
-        [
-            batch_filter,
-            seq_filter,
-            d_model_filter,
-            d_head_filter,
-            num_heads_filter,
-            num_layers_filter,
-            d_ff_filter,
-        ],
-        justify="start",
-        gap=2,
-        wrap=True,
-    )
+    # Range sliders for continuous metrics
+    if df.is_empty() or "num_params_M" not in df.columns:
+        params_range_filter = mo.ui.range_slider(
+            start=0, stop=100, step=1, value=[0, 100], label="Parameters (M)"
+        )
+    else:
+        _min_p = float(df["num_params_M"].min())
+        _max_p = float(df["num_params_M"].max())
+        _step_p = max(0.1, (_max_p - _min_p) / 100)
+        params_range_filter = mo.ui.range_slider(
+            start=_min_p, stop=_max_p, step=_step_p,
+            value=[_min_p, _max_p], label="Parameters (M)"
+        )
+
+    if df.is_empty() or "ffn_ratio" not in df.columns:
+        ffn_ratio_filter = mo.ui.range_slider(
+            start=0, stop=10, step=0.1, value=[0, 10], label="FFN Ratio"
+        )
+    else:
+        _min_f = float(df["ffn_ratio"].min())
+        _max_f = float(df["ffn_ratio"].max())
+        _step_f = max(0.1, (_max_f - _min_f) / 50)
+        ffn_ratio_filter = mo.ui.range_slider(
+            start=_min_f, stop=_max_f, step=_step_f,
+            value=[_min_f, _max_f], label="FFN Ratio"
+        )
+
+    mo.vstack([
+        mo.hstack(
+            [
+                batch_filter,
+                seq_filter,
+                d_model_filter,
+                d_head_filter,
+                num_heads_filter,
+                num_layers_filter,
+                d_ff_filter,
+            ],
+            justify="start",
+            gap=2,
+            wrap=True,
+        ),
+        mo.hstack(
+            [params_range_filter, ffn_ratio_filter],
+            justify="start",
+            gap=4,
+        ),
+    ])
     return (
         batch_filter,
+        d_ff_filter,
         d_head_filter,
         d_model_filter,
-        d_ff_filter,
+        ffn_ratio_filter,
         num_heads_filter,
         num_layers_filter,
+        params_range_filter,
         seq_filter,
     )
 
@@ -216,12 +287,14 @@ def _(df, mo):
 @app.cell
 def _(
     batch_filter,
+    d_ff_filter,
     d_head_filter,
     d_model_filter,
-    d_ff_filter,
     df,
+    ffn_ratio_filter,
     num_heads_filter,
     num_layers_filter,
+    params_range_filter,
     pl,
     seq_filter,
 ):
@@ -240,6 +313,17 @@ def _(
         filtered_df = filtered_df.filter(pl.col("num_layers").is_in(num_layers_filter.value))
     if "d_ff" in df.columns and d_ff_filter.value:
         filtered_df = filtered_df.filter(pl.col("d_ff").is_in(d_ff_filter.value))
+    # Range filters for parameters and FFN ratio
+    if "num_params_M" in df.columns and params_range_filter.value:
+        _p_min, _p_max = params_range_filter.value
+        filtered_df = filtered_df.filter(
+            (pl.col("num_params_M") >= _p_min) & (pl.col("num_params_M") <= _p_max)
+        )
+    if "ffn_ratio" in df.columns and ffn_ratio_filter.value:
+        _f_min, _f_max = ffn_ratio_filter.value
+        filtered_df = filtered_df.filter(
+            (pl.col("ffn_ratio") >= _f_min) & (pl.col("ffn_ratio") <= _f_max)
+        )
     return (filtered_df,)
 
 
@@ -286,31 +370,82 @@ def _(filtered_df, mo, px):
         _missing = sorted(_required_cols - set(filtered_df.columns))
         mo.stop(True, mo.md(f"Missing required columns for plot: {_missing}"))
 
+    _hover_cols = [
+        "batch_size",
+        "seq_len",
+        "d_model",
+        "d_head",
+        "num_heads",
+        "num_layers",
+        "d_ff",
+        "median_ms",
+    ]
+    if "num_params_M" in filtered_df.columns:
+        _hover_cols.append("num_params_M")
+    if "ffn_ratio" in filtered_df.columns:
+        _hover_cols.append("ffn_ratio")
+
     _fig = px.scatter(
         filtered_df,
         x="est_memory_gb",
         y="tokens_per_sec",
         color="d_model",
         size="batch_size",
-        hover_data=[
-            "batch_size",
-            "seq_len",
-            "d_model",
-            "d_head",
-            "num_heads",
-            "num_layers",
-            "d_ff",
-            "median_ms",
-        ],
+        hover_data=_hover_cols,
         title="Throughput vs Estimated Memory",
         labels={
             "est_memory_gb": "Estimated Memory (GB)",
             "tokens_per_sec": "Throughput (tokens/sec)",
             "d_model": "d_model",
+            "num_params_M": "Parameters (M)",
+            "ffn_ratio": "FFN Ratio",
         },
     )
     _fig.update_layout(height=500)
     _fig
+    return
+
+
+@app.cell
+def _(mo):
+    # Calculate parameter counts for the two models
+    _vocab_size = 10000
+    def _calc_params(d_model, num_layers, d_ff):
+        return (
+            2 * _vocab_size * d_model +  # embeddings + LM head
+            d_model +  # final RMSNorm
+            num_layers * (
+                2 * d_model +  # 2 RMSNorms per layer
+                4 * d_model * d_model +  # Q, K, V, O
+                3 * d_model * d_ff  # SwiGLU FFN
+            )
+        )
+
+    model_a_params = _calc_params(640, 10, 1024) / 1e6
+    model_b_params = _calc_params(384, 12, 1728) / 1e6
+
+    mo.md(f"""
+    ## Model selection
+
+    To explore the properties of models with similar training characteristics but different architectures, two models that were closely matched for token throughput and memory consumption were selected:
+
+    | Aspect | Model A | Model B |
+    |--------|---------|---------|
+    | batch_size | 64 | 48 |
+    | seq_len | 256 | 256 |
+    | d_model | 640 | 384 |
+    | d_head | 64 | 32 |
+    | num_heads | 10 | 12 |
+    | num_layers | 10 | 12 |
+    | d_ff | 1024 | 1728 |
+    | **FFN ratio** | **1.6×** | **4.5×** |
+    | **Parameters** | **{model_a_params:.1f}M** | **{model_b_params:.1f}M** |
+
+    Both used ~16GB RAM and achieved 3800-3900 tokens/s throughput.
+
+    **Key insight**: Model A has ~27% more parameters but a very low FFN expansion ratio (1.6× vs standard 4×).
+    FFN layers store learned knowledge, so Model A may underperform despite its parameter advantage.
+    """)
     return
 
 
@@ -406,20 +541,24 @@ def _(filtered_df, mo):
     if filtered_df.is_empty():
         mo.stop(True, mo.md("No data to show."))
 
-    top_throughput = filtered_df.sort("tokens_per_sec", descending=True).head(10).select(
-        [
-            "batch_size",
-            "seq_len",
-            "d_model",
-            "d_head",
-            "num_heads",
-            "num_layers",
-            "d_ff",
-            "tokens_per_sec",
-            "median_ms",
-            "est_memory_gb",
-        ]
-    )
+    _top_cols = [
+        "batch_size",
+        "seq_len",
+        "d_model",
+        "d_head",
+        "num_heads",
+        "num_layers",
+        "d_ff",
+        "tokens_per_sec",
+        "median_ms",
+        "est_memory_gb",
+    ]
+    if "num_params_M" in filtered_df.columns:
+        _top_cols.append("num_params_M")
+    if "ffn_ratio" in filtered_df.columns:
+        _top_cols.append("ffn_ratio")
+
+    top_throughput = filtered_df.sort("tokens_per_sec", descending=True).head(10).select(_top_cols)
 
     mo.vstack([mo.md("### Top 10 by Throughput"), mo.ui.table(top_throughput)])
     return
@@ -437,20 +576,24 @@ def _(filtered_df, mo, pl):
     efficiency_df = filtered_df.with_columns(
         [(pl.col("tokens_per_sec") / pl.col("est_memory_gb")).alias("efficiency")]
     )
-    top_efficiency = efficiency_df.sort("efficiency", descending=True).head(10).select(
-        [
-            "batch_size",
-            "seq_len",
-            "d_model",
-            "d_head",
-            "num_heads",
-            "num_layers",
-            "d_ff",
-            "tokens_per_sec",
-            "est_memory_gb",
-            "efficiency",
-        ]
-    )
+    _eff_cols = [
+        "batch_size",
+        "seq_len",
+        "d_model",
+        "d_head",
+        "num_heads",
+        "num_layers",
+        "d_ff",
+        "tokens_per_sec",
+        "est_memory_gb",
+        "efficiency",
+    ]
+    if "num_params_M" in efficiency_df.columns:
+        _eff_cols.append("num_params_M")
+    if "ffn_ratio" in efficiency_df.columns:
+        _eff_cols.append("ffn_ratio")
+
+    top_efficiency = efficiency_df.sort("efficiency", descending=True).head(10).select(_eff_cols)
 
     mo.vstack([mo.md("### Top 10 by Efficiency (throughput / memory)"), mo.ui.table(top_efficiency)])
     return
