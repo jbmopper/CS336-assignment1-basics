@@ -241,20 +241,23 @@ def load_model(src) -> tuple[dict, TransformerLM]:
     if config["device"] == None:
         config["device"] = "cpu"
 
+    # Model params may be nested under "model_settings" or at top level
+    model_cfg = config.get("model_settings", config)
+
     model =  TransformerLM(
-        config["vocab_size"],
-        config["d_model"],
-        config["num_heads"],
-        config["num_layers"],
-        config["d_ff"],
-        config["context_length"],
-        config["rope_theta"],
-        norm_mode=config.get("norm_mode", "pre"),
-        use_rope=config.get("use_rope", True),
-        ffn_type=config.get("ffn_type", "swiglu"),
-        ffn_hidden_dim=config.get("ffn_hidden_dim"),
-        final_norm=config.get("final_norm"),
-    ).to(config["device"]) # does this happen here?
+        model_cfg["vocab_size"],
+        model_cfg["d_model"],
+        model_cfg["num_heads"],
+        model_cfg["num_layers"],
+        model_cfg["d_ff"],
+        model_cfg["context_length"],
+        model_cfg.get("rope_theta", 10000.0),
+        norm_mode=model_cfg.get("norm_mode", "pre"),
+        use_rope=model_cfg.get("use_rope", True),
+        ffn_type=model_cfg.get("ffn_type", "swiglu"),
+        ffn_hidden_dim=model_cfg.get("ffn_hidden_dim"),
+        final_norm=model_cfg.get("final_norm"),
+    ).to(config["device"])
 
     model.load_state_dict(obj["model"])
     return config, model

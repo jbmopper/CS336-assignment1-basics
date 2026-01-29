@@ -358,6 +358,26 @@ def main():
         train_model(model_a, base_config, tokens, valid_tokens, device, timestamp)
 
     if args.model in ("B", "both"):
+        # Clean up memory before starting Model B to avoid fragmentation issues
+        if args.model == "both":
+            print("\n" + "-" * 70)
+            print("Cleaning up memory before Model B...")
+            print("-" * 70)
+            import gc
+            gc.collect()
+            if device == "mps":
+                torch.mps.empty_cache()
+                torch.mps.synchronize()
+            elif device == "cuda":
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            gc.collect()
+            if device == "mps":
+                torch.mps.empty_cache()
+            elif device == "cuda":
+                torch.cuda.empty_cache()
+            print("Memory cleanup complete.\n")
+        
         # Reset seeds for fair comparison
         setup_device_and_seeds(args.seed)
         train_model(model_b, base_config, tokens, valid_tokens, device, timestamp)

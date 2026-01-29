@@ -82,8 +82,13 @@ def main():
     args = p.parse_args()
 
     config, model = load_model(args.ckpt)
-    vocab, merges = load_bpe(config["tokenizer_dir"])
-    tokenizer = Tokenizer(vocab, merges, special_tokens=config["special_tokens"])
+    
+    # Use defaults for tokenizer if not in config
+    tokenizer_dir = config.get("tokenizer_dir", "tokenizers/tinystories")
+    special_tokens = config.get("special_tokens", ["<|endoftext|>"])
+    
+    vocab, merges = load_bpe(tokenizer_dir)
+    tokenizer = Tokenizer(vocab, merges, special_tokens=special_tokens)
     setDeviceAndSeeds(config)
     model.to(config["device"])
 
