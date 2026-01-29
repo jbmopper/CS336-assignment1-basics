@@ -2,6 +2,18 @@
 
 Benchmarks the _train_step method of Trainer across various model configurations.
 Uses blocked_autorange for accurate timing measurements.
+
+Supports mixed precision (fp32/fp16/bf16) for CUDA benchmarking.
+
+Usage:
+    # MPS benchmark (default)
+    uv run python -m benchmarks.train_benchmark --device mps
+    
+    # CUDA benchmark with BF16
+    uv run python -m benchmarks.train_benchmark --device cuda --precision bf16
+    
+    # Quick test sweep
+    uv run python -m benchmarks.train_benchmark --smol --device cuda --precision bf16
 """
 
 from cs336_basics.training import Trainer
@@ -16,7 +28,7 @@ import argparse
 import os
 
 
-def make_config(batch_size, seq_len, d_model, num_heads, num_layers, d_ff, device="mps"):
+def make_config(batch_size, seq_len, d_model, num_heads, num_layers, d_ff, device="mps", precision="fp32"):
     """Create a trainer config for the given parameters."""
     return {
         "model_settings": {
@@ -29,6 +41,7 @@ def make_config(batch_size, seq_len, d_model, num_heads, num_layers, d_ff, devic
             "rope_theta": 10000.0,
         },
         "device": device,
+        "precision": precision,  # Mixed precision mode
         "checkpoint_dir": "/tmp/benchmark_checkpoints",
         "checkpoint_add_timestamp": False,
         "batch_size": batch_size,
@@ -76,12 +89,20 @@ def main():
     parser.add_argument("--smol", action="store_true", help="Small sweep for quick testing")
     parser.add_argument("--data", default="tinystories", help="Dataset to use")
     parser.add_argument("--device", default="mps", help="Device (mps, cuda, cpu)")
+    parser.add_argument("--precision", default="fp32", choices=["fp32", "fp16", "bf16"],
+                        help="Training precision (bf16 recommended for 4090/A100+)")
     parser.add_argument("--max-memory-gb", type=float, default=20.0, 
                         help="Skip configs estimated to exceed this memory (GB)")
     parser.add_argument("--min-run-time", type=float, default=2.0,
                         help="Minimum benchmark run time in seconds")
     parser.add_argument("--output-dir", default=".", help="Output directory for results")
     args = parser.parse_args()
+    
+    # Print device info for CUDA
+    if args.device == "cuda" and torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name()}")
+        print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+        print(f"Precision: {args.precision}")
 
     # Define sweep parameters
     # d_head is the grid variable; n_heads = d_model / d_head
@@ -166,6 +187,7 @@ def main():
                 num_layers=cfg["num_layers"],
                 d_ff=cfg["d_ff"],
                 device=args.device,
+                precision=args.precision,
             )
             
             # Create trainer (no W&B logging)
@@ -244,12 +266,18 @@ def main():
     output = {
         "timestamp": timestamp,
         "device": args.device,
+        "precision": args.precision,
         "max_memory_gb": args.max_memory_gb,
         "min_run_time": args.min_run_time,
         "results": [cfg for cfg in all_configs if "median_s" in cfg],
         "oom_configs": oom_configs,
         "skipped_configs": skipped_configs,
     }
+    
+    # Add GPU info for CUDA
+    if args.device == "cuda" and torch.cuda.is_available():
+        output["gpu_name"] = torch.cuda.get_device_name()
+        output["gpu_vram_gb"] = torch.cuda.get_device_properties(0).total_memory / 1e9
     
     filename = os.path.join(args.output_dir, f"train_benchmark_{timestamp}.json")
     with open(filename, "w") as f:

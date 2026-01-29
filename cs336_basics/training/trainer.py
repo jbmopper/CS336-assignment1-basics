@@ -16,6 +16,14 @@ from ..optimizer import AdamW, get_lr_cosine_schedule
 from .timer import timer
 
 
+# Precision mode to dtype mapping
+PRECISION_DTYPES = {
+    "fp32": None,  # No autocast
+    "fp16": torch.float16,
+    "bf16": torch.bfloat16,
+}
+
+
 class Trainer:
     """Manages model training, optimization, and logging.
     
@@ -42,6 +50,12 @@ class Trainer:
         wandb_entity (str): W&B entity/username (default: None, disables W&B)
         log_project (str): W&B project name (required if wandb_entity set)
         run_name (str): W&B run name (required if wandb_entity set)
+        
+        # Mixed Precision
+        precision (str): Training precision - "fp32", "fp16", or "bf16" (default: "fp32")
+            - fp32: Full precision, no autocast
+            - fp16: Half precision with GradScaler (requires loss scaling)
+            - bf16: BFloat16, recommended for 4090/A100+ (no scaling needed)
         
         # Optimizer
         optimizer_lr (float): Learning rate (default: 1e-3)
@@ -91,6 +105,17 @@ class Trainer:
             eps=config.get("optimizer_eps", 1e-8),
             weight_decay=weight_decay,
         )
+
+        # Mixed precision setup
+        self.precision = config.get("precision", "fp32")
+        self.amp_dtype = PRECISION_DTYPES.get(self.precision)
+        self.use_amp = self.amp_dtype is not None and config["device"] == "cuda"
+        
+        # GradScaler only needed for FP16 (BF16 doesn't need loss scaling)
+        if self.use_amp and self.precision == "fp16":
+            self.scaler = torch.amp.GradScaler("cuda")
+        else:
+            self.scaler = None
 
         # W&B logging is optional - only initialize if wandb_entity is provided
         self.use_wandb = config.get("wandb_entity") is not None
@@ -180,30 +205,44 @@ class Trainer:
                     self.config["device"],
                 )
 
-        # Forward pass
+        # Forward pass (with optional autocast for mixed precision)
         with torch.profiler.record_function("## FORWARD ##"):
             with timer("Time/Forward", log):
                 self.model.train()
-                out_logits = self.model.forward(inputs)
+                if self.use_amp:
+                    with torch.autocast(device_type="cuda", dtype=self.amp_dtype):
+                        out_logits = self.model.forward(inputs)
+                else:
+                    out_logits = self.model.forward(inputs)
 
-        # Loss calculation
+        # Loss calculation (with optional autocast for mixed precision)
         with torch.profiler.record_function("## LOSS_CALC ##"):
             with timer("Time/Loss calc", log):
-                loss = crossentropy(out_logits, labels)
+                if self.use_amp:
+                    with torch.autocast(device_type="cuda", dtype=self.amp_dtype):
+                        loss = crossentropy(out_logits, labels)
+                else:
+                    loss = crossentropy(out_logits, labels)
                 perplexity = math.exp(loss.item())
 
         log["Loss"] = loss.item()
         log["Perplexity"] = perplexity
 
-        # Backward pass
+        # Backward pass (with GradScaler for FP16)
         with torch.profiler.record_function("## BACKWARD ##"):
             with timer("Time/Backward", log):
                 self.optimizer.zero_grad(set_to_none=True)
-                loss.backward()
+                if self.scaler is not None:
+                    self.scaler.scale(loss).backward()
+                else:
+                    loss.backward()
 
-        # Gradient clipping - calculating norm forces a sync
+        # Gradient clipping - unscale first if using GradScaler
         with torch.profiler.record_function("## GRAD_NORM ##"):
             with timer("Time/Grad norm calc", log):
+                if self.scaler is not None:
+                    # Unscale gradients before clipping
+                    self.scaler.unscale_(self.optimizer)
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     max_norm=float("inf"),
@@ -234,7 +273,11 @@ class Trainer:
 
         with torch.profiler.record_function("## OPTIMIZER_STEP ##"):
             with timer("Time/Optimizer step", log):
-                self.optimizer.step()
+                if self.scaler is not None:
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    self.optimizer.step()
 
         # Efficient timing: one synchronization at the end of the step
         if self.config["device"] == "mps":
@@ -284,8 +327,13 @@ class Trainer:
         with timer("Time/Eval forward pass", log):
             with torch.no_grad():
                 for batch_inputs, batch_labels in zip(eval_inputs, eval_labels, strict=True):
-                    eval_logits = self.model.forward(batch_inputs)
-                    batch_loss = crossentropy(eval_logits, batch_labels)
+                    if self.use_amp:
+                        with torch.autocast(device_type="cuda", dtype=self.amp_dtype):
+                            eval_logits = self.model.forward(batch_inputs)
+                            batch_loss = crossentropy(eval_logits, batch_labels)
+                    else:
+                        eval_logits = self.model.forward(batch_inputs)
+                        batch_loss = crossentropy(eval_logits, batch_labels)
                     total_loss += batch_loss.item()
 
         avg_loss = total_loss / eval_batches
