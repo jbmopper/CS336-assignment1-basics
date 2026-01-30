@@ -9,6 +9,12 @@ Usage:
 
     # Smoke test (small models, few iterations)
     uv run python -m cs336_basics.train_compare --smol
+    
+    # Mixed precision (CUDA only)
+    uv run python -m cs336_basics.train_compare --precision bf16
+    
+    # torch.compile (CUDA only)
+    uv run python -m cs336_basics.train_compare --compile --compile-backend aot_eager
 
     # Custom checkpoint directory (e.g., external drive)
     uv run python -m cs336_basics.train_compare --checkpoint-dir /Volumes/External/checkpoints
@@ -157,6 +163,11 @@ def get_base_config(checkpoint_dir: str, smol: bool = False) -> dict:
         "eval_every": 100 if not smol else 10,
         "eval_batches": 10 if not smol else 2,
         "gradient_clip": 1.0,
+        
+        # Precision / compile
+        "precision": "fp32",
+        "compile_model": False,
+        "compile_backend": "aot_eager",
 
         # Checkpointing
         "checkpoint_dir": checkpoint_dir,
@@ -323,6 +334,24 @@ def main():
         help="Base checkpoint directory (default: checkpoints/model_comp)",
     )
     parser.add_argument(
+        "--precision",
+        type=str,
+        choices=["fp32", "fp16", "bf16"],
+        default="fp32",
+        help="Training precision (CUDA only for fp16/bf16)",
+    )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Enable torch.compile (CUDA only)",
+    )
+    parser.add_argument(
+        "--compile-backend",
+        type=str,
+        default="inductor",
+        help="torch.compile backend (default: inductor)",
+    )
+    parser.add_argument(
         "--num-iters",
         type=int,
         default=None,
@@ -345,6 +374,9 @@ def main():
     # Get base config
     base_config = get_base_config(args.checkpoint_dir, smol=args.smol)
     base_config["rand_seed"] = args.seed
+    base_config["precision"] = args.precision
+    base_config["compile_model"] = args.compile
+    base_config["compile_backend"] = args.compile_backend
 
     # Override num_iters if specified
     if args.num_iters is not None:

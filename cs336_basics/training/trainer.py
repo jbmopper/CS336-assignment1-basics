@@ -57,6 +57,10 @@ class Trainer:
             - fp16: Half precision with GradScaler (requires loss scaling)
             - bf16: BFloat16, recommended for 4090/A100+ (no scaling needed)
         
+        # Torch Compile (CUDA only)
+        compile_model (bool): Whether to torch.compile the model (default: False)
+        compile_backend (str): torch.compile backend (default: "aot_eager")
+        
         # Optimizer
         optimizer_lr (float): Learning rate (default: 1e-3)
         optimizer_betas (tuple): Adam betas (default: (0.9, 0.999))
@@ -97,6 +101,16 @@ class Trainer:
         """
 
         self.model = model_class(**config["model_settings"]).to(config["device"])
+        if config["device"] == "cuda":
+            torch.set_float32_matmul_precision('high')
+        
+        if config.get("compile_model"):
+            if config["device"] == "cuda":
+                backend = config.get("compile_backend", "aot_eager")
+                self.model = torch.compile(self.model, backend=backend)
+                print(f"Compiled model with torch.compile (backend={backend})")
+            else:
+                print("Skipping torch.compile: CUDA device not available")
         weight_decay = config.get("optimizer_weight_decay", 1e-2)
         self.optimizer = AdamW(
             self.model.parameters(),
