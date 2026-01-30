@@ -8,16 +8,18 @@ FROM nvcr.io/nvidia/pytorch:25.03-py3
 #   25.08-py3: PyTorch 2.8.0a0, CUDA 13.0 (newer, higher driver requirement)
 #   24.12-py3: PyTorch 2.6.0a0, CUDA 12.6.3
 
-# Install OS deps for git, SSH, and S3 access
+# Install OS deps for git/SSH/certs; awscli via uv (apt package missing on noble)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     openssh-client \
-    awscli \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Install awscli (apt package missing on noble)
+RUN uv pip install --system awscli
 
 WORKDIR /app
 
