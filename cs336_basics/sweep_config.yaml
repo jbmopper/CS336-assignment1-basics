@@ -11,17 +11,20 @@
 program: cs336_basics/train_sweep.py
 method: bayes  # Bayesian optimization for efficient hyperparameter search
 metric:
-  name: Eval loss
+  name: Eval Loss
   goal: minimize
 
 parameters:
   # Learning rate parameters (stock model/settings, sweep LR only)
   scheduler_lr_max:
-    values: [5e-5, 1e-4, 1e-3, 1e-2, 5e-2]
+    distribution: uniform
+    min: 5e-5
+    max: 5e-1
 
 # Early termination to stop poor performing runs
 early_terminate:
   type: hyperband
-  min_iter: 100
+  min_iter: 250
+  max_iter: 1000
   eta: 3
-  s: 2
+  s: 1

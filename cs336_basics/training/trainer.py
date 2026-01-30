@@ -143,10 +143,10 @@ class Trainer:
                 eval_log = self._eval_step(i)
                 train_log.update(eval_log)
 
-                eval_loss = eval_log.get("Eval/Loss")
+                eval_loss = eval_log.get("Eval Loss")
                 if eval_loss is not None and eval_loss < self.best_eval_loss:
                     self.best_eval_loss = eval_loss
-                    train_log["Eval/Best loss"] = eval_loss
+                    train_log["Eval Best loss"] = eval_loss
                     if save_best:
                         self._save_best_checkpoint(i)
 
@@ -289,8 +289,8 @@ class Trainer:
                     total_loss += batch_loss.item()
 
         avg_loss = total_loss / eval_batches
-        log["Eval/Loss"] = avg_loss
-        log["Eval/Perplexity"] = math.exp(avg_loss)
+        log["Eval Loss"] = avg_loss
+        log["Eval Perplexity"] = math.exp(avg_loss)
 
         return log
 
