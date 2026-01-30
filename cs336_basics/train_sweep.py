@@ -16,21 +16,22 @@ Usage:
 from cs336_basics import TransformerLM
 from cs336_basics.training import Trainer
 import wandb
-
+from pathlib import Path
 import os
 import numpy as np
 import torch
 import argparse
 
 # Default configuration (will be overridden by sweep)
+BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = dict(
     # Paths
-    training_text="../data/TinyStoriesV2-GPT4-train.txt",
-    validation_text="../data/TinyStoriesV2-GPT4-valid.txt",
-    tokenizer_dir="/tokenizers/tinystories/",
-    train_file="/tokenized/tinystories_train_fixed.npy",
-    valid_file="/tokenized/tinystories_valid_fixed.npy",
-    checkpoint_dir="/Volumes/slab_storage/checkpoints",
+    training_text=str(BASE_DIR / "data/TinyStoriesV2-GPT4-train.txt"),
+    validation_text=str(BASE_DIR / "data/TinyStoriesV2-GPT4-valid.txt"),
+    tokenizer_dir=str(BASE_DIR / "tokenizers/tinystories"),
+    train_file=str(BASE_DIR / "tokenized/tinystories_train_fixed.npy"),
+    valid_file=str(BASE_DIR / "tokenized/tinystories_valid_fixed.npy"),
+    checkpoint_dir=str(BASE_DIR / "checkpoints/sweeps"),
     
     # Checkpointing
     save_best=True,       # Save checkpoint when eval_loss improves
