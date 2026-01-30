@@ -196,7 +196,7 @@ def main():
         default=None,
         help="Override number of training iterations"
     )
-    args = parser.parse_args()
+    args, _unknown = parser.parse_known_args()
 
     # Update default config if args provided
     if args.num_iters is not None:
