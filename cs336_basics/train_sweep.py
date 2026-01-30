@@ -27,9 +27,9 @@ DEFAULT_CONFIG = dict(
     # Paths
     training_text="../data/TinyStoriesV2-GPT4-train.txt",
     validation_text="../data/TinyStoriesV2-GPT4-valid.txt",
-    tokenizer_dir="../tokenizers/tinystories/",
-    train_file="../tokenized/tinystories_train_fixed.npy",
-    valid_file="../tokenized/tinystories_valid_fixed.npy",
+    tokenizer_dir="/tokenizers/tinystories/",
+    train_file="/tokenized/tinystories_train_fixed.npy",
+    valid_file="/tokenized/tinystories_valid_fixed.npy",
     checkpoint_dir="/Volumes/slab_storage/checkpoints",
     
     # Checkpointing
