@@ -135,6 +135,13 @@ def train_sweep():
             config[key] = value
             print(f"Sweep override: {key} = {value}")
 
+    # Keep lr_min tied to lr_max unless explicitly swept
+    if "scheduler_lr_min" not in sweep_params:
+        config["scheduler_lr_min"] = config["scheduler_lr_max"] / 10
+
+    if config["scheduler_lr_min"] >= config["scheduler_lr_max"]:
+        config["scheduler_lr_min"] = config["scheduler_lr_max"] / 10
+
     # Ensure scheduler_cos_iters matches num_iters
     config["scheduler_cos_iters"] = config["num_iters"]
 
