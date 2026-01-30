@@ -1,0 +1,1 @@
+uv run python -m cs336_basics.train_compare --model B

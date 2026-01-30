@@ -33,31 +33,61 @@ from cs336_basics.training import Trainer
 # Model Configurations (from notes.md)
 # =============================================================================
 
+# MODEL_A_CONFIG = {
+#     "name": "Model_A_wide_attn",
+#     "description": "Wide attention, low FFN ratio (1.6x), 48.9M params",
+#     "batch_size": 64,
+#     "model_settings": {
+#         "vocab_size": 10000,
+#         "d_model": 640,
+#         "num_heads": 10,  # d_head = 64
+#         "num_layers": 10,
+#         "d_ff": 1024,
+#         "context_length": 256,
+#         "rope_theta": 10000.0,
+#     },
+# }
+# 
+# MODEL_B_CONFIG = {
+#     "name": "Model_B_standard_ffn",
+#     "description": "Standard FFN ratio (4.5x), deeper (12L), 38.7M params",
+#     "batch_size": 48,
+#     "model_settings": {
+#         "vocab_size": 10000,
+#         "d_model": 384,
+#         "num_heads": 12,  # d_head = 32
+#         "num_layers": 12,
+#         "d_ff": 1728,
+#         "context_length": 256,
+#         "rope_theta": 10000.0,
+#     },
+# }
+# 
 MODEL_A_CONFIG = {
-    "name": "Model_A_wide_attn",
-    "description": "Wide attention, low FFN ratio (1.6x), 48.9M params",
-    "batch_size": 64,
+    "name": "Model_A_wide",
+    "description": "Wider, shallower model for width/depth tradeoff",
+    "batch_size": 32,
     "model_settings": {
         "vocab_size": 10000,
-        "d_model": 640,
-        "num_heads": 10,  # d_head = 64
-        "num_layers": 10,
-        "d_ff": 1024,
+        "d_model": 768,
+        "num_heads": 12,  # d_head = 64
+        "num_layers": 2,
+        "d_ff": 2048,
         "context_length": 256,
         "rope_theta": 10000.0,
     },
 }
 
 MODEL_B_CONFIG = {
-    "name": "Model_B_standard_ffn",
-    "description": "Standard FFN ratio (4.5x), deeper (12L), 38.7M params",
-    "batch_size": 48,
+    "name": "Model_B_deep",
+    "description": "Deeper, narrower model for width/depth tradeoff",
+    "batch_size": 32,
     "model_settings": {
         "vocab_size": 10000,
         "d_model": 384,
         "num_heads": 12,  # d_head = 32
         "num_layers": 12,
-        "d_ff": 1728,
+        "d_ff": 1024,
         "context_length": 256,
         "rope_theta": 10000.0,
     },
@@ -358,6 +388,26 @@ def main():
         train_model(model_a, base_config, tokens, valid_tokens, device, timestamp)
 
     if args.model in ("B", "both"):
+        # Clean up memory before starting Model B to avoid fragmentation issues
+        if args.model == "both":
+            print("\n" + "-" * 70)
+            print("Cleaning up memory before Model B...")
+            print("-" * 70)
+            import gc
+            gc.collect()
+            if device == "mps":
+                torch.mps.empty_cache()
+                torch.mps.synchronize()
+            elif device == "cuda":
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            gc.collect()
+            if device == "mps":
+                torch.mps.empty_cache()
+            elif device == "cuda":
+                torch.cuda.empty_cache()
+            print("Memory cleanup complete.\n")
+        
         # Reset seeds for fair comparison
         setup_device_and_seeds(args.seed)
         train_model(model_b, base_config, tokens, valid_tokens, device, timestamp)
