@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Install awscli (apt package missing on noble)
-RUN uv pip install --system awscli
+RUN uv pip install --system --break-system-packages awscli
 
 WORKDIR /app
 
