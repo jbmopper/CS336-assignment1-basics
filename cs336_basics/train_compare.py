@@ -144,7 +144,7 @@ def get_base_config(checkpoint_dir: str, smol: bool = False) -> dict:
 
         # W&B logging
         "wandb_entity": "jbmopper-0",
-        "log_project": "cs336-a1-model_comp",
+        "log_project": "cs336-a1-gpu-model_comp",
 
         # Optimizer (AdamW)
         "optimizer_lr": 1e-3,
