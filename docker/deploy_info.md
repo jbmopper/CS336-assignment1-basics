@@ -6,13 +6,19 @@
 
 ### start command
 ```bash
-bash -lc 'set -e; REPO=/workspace/CS336-assignment1-basics; if [ -d "$REPO/.git" ]; then git -C "$REPO" pull --rebase; else git clone git@github.com:jbmopper/CS336-assignment1-basics.git "$REPO"; fi; cd "$REPO"; uv sync --frozen --python-preference system; export PS1='\''\u@\h:\w\$ '\''; bash'
+bash -lc 'set -e; REPO=/workspace/CS336-assignment1-basics; \
+if [ -d "$REPO/.git" ]; then git -C "$REPO" pull --rebase; \
+else git clone git@github.com:jbmopper/CS336-assignment1-basics.git "$REPO"; fi; \
+cd "$REPO"; uv sync --frozen --python-preference system; \
+echo '\''export PS1="\u@\h:\w\$ "'\'' >> /root/.bashrc; \
+sleep infinity'
 ```
 
 ### run commands
 ```bash
 # One-time prep: sync data, add symlinks, start background S3 sync
 ./runpod/prep_train_compare.sh s3://YOUR-BUCKET/assignment1-basics/checkpoints/model_comp 300
+# ./runpod/prep_train_compare.sh s3://cs336-spot-287998774376-us-west-2/assignment1-basics/checkpoints/model_comp_1/ 300
 
 # Train Model A vs B
 uv run python -m cs336_basics.train_compare --precision bf16 --checkpoint-dir /workspace/checkpoints/model_comp
