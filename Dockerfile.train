@@ -1,0 +1,44 @@
+# GPU Training Dockerfile with NVIDIA profiling tools (nsys, ncu)
+# Requires: host NVIDIA driver compatible with CUDA 12.8
+# FP8 support requires CUDA 12.1+ and Hopper+ GPUs
+
+FROM nvcr.io/nvidia/pytorch:25.03-py3
+# PyTorch 2.7.0a0, CUDA 12.8.1, Python 3.12, nsys, ncu included
+# Alternatives if needed:
+#   25.08-py3: PyTorch 2.8.0a0, CUDA 13.0 (newer, higher driver requirement)
+#   24.12-py3: PyTorch 2.6.0a0, CUDA 12.6.3
+
+# Install OS deps for git/SSH/certs; awscli via uv (apt package missing on noble)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    openssh-client \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Install awscli (apt package missing on noble)
+RUN uv pip install --system --break-system-packages awscli
+
+WORKDIR /app
+
+# Copy project files
+COPY pyproject.toml uv.lock README.md ./
+COPY cs336_basics/ ./cs336_basics/
+COPY benchmarks/ ./benchmarks/
+COPY tests/ ./tests/
+
+# Install dependencies (use system Python from NGC image)
+RUN uv sync --frozen --python-preference system
+
+# For profiling - allow nsys/ncu to work in container
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+
+# Entrypoint to hydrate SSH/AWS creds from env vars
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Default to bash for interactive use
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["bash"]
