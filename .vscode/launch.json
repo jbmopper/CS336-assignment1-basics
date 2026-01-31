@@ -3,17 +3,17 @@
     "configurations": [
         {
             "name": "Python: Decode (module)",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "module": "cs336_basics.decode",
-            "cwd": "/Users/juliusmopper/Dev/CS336-assignment1-basics/cs336_basics",
+            "cwd": "${workspaceFolder}",
             "args": [
-                "/Users/juliusmopper/Dev/CS336-assignment1-basics/checkpoints/_20251211_0148/latest.pt"
+                "${workspaceFolder}/checkpoints/latest.pt"
             ],
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {
-                "PYTHONPATH": "/Users/juliusmopper/Dev/CS336-assignment1-basics/"
+                "PYTHONPATH": "${workspaceFolder}"
             }
         }
     ]
