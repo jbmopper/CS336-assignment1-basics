@@ -186,3 +186,7 @@ checkpoints/
 # Wandb local files
 wandb/
 *.pem
+
+# Temporary output files
+o.txt
+model_*_output.txt

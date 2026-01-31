@@ -27,120 +27,52 @@ Usage:
 import argparse
 import os
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
-import torch
+import yaml
 
 from cs336_basics import TransformerLM
-from cs336_basics.training import Trainer
+from cs336_basics.training import (
+    Trainer,
+    setup_device,
+    clear_device_cache,
+    load_tokens,
+    calculate_params,
+    estimate_checkpoint_size_mb,
+    print_model_summary,
+)
 
 
 # =============================================================================
-# Model Configurations (from notes.md)
+# Model Configurations - loaded from configs/models.yaml
 # =============================================================================
 
-# MODEL_A_CONFIG = {
-#     "name": "Model_A_wide_attn",
-#     "description": "Wide attention, low FFN ratio (1.6x), 48.9M params",
-#     "batch_size": 64,
-#     "model_settings": {
-#         "vocab_size": 10000,
-#         "d_model": 640,
-#         "num_heads": 10,  # d_head = 64
-#         "num_layers": 10,
-#         "d_ff": 1024,
-#         "context_length": 256,
-#         "rope_theta": 10000.0,
-#     },
-# }
-# 
-# MODEL_B_CONFIG = {
-#     "name": "Model_B_standard_ffn",
-#     "description": "Standard FFN ratio (4.5x), deeper (12L), 38.7M params",
-#     "batch_size": 48,
-#     "model_settings": {
-#         "vocab_size": 10000,
-#         "d_model": 384,
-#         "num_heads": 12,  # d_head = 32
-#         "num_layers": 12,
-#         "d_ff": 1728,
-#         "context_length": 256,
-#         "rope_theta": 10000.0,
-#     },
-# }
-# 
-MODEL_A_CONFIG = {
-    "name": "Model_A_wide",
-    "description": "Wider, shallower model for width/depth tradeoff",
-    "batch_size": 32,
-    "model_settings": {
-        "vocab_size": 10000,
-        "d_model": 768,
-        "num_heads": 12,  # d_head = 64
-        "num_layers": 2,
-        "d_ff": 2048,
-        "context_length": 256,
-        "rope_theta": 10000.0,
-    },
-}
-
-MODEL_B_CONFIG = {
-    "name": "Model_B_deep",
-    "description": "Deeper, narrower model for width/depth tradeoff",
-    "batch_size": 32,
-    "model_settings": {
-        "vocab_size": 10000,
-        "d_model": 384,
-        "num_heads": 12,  # d_head = 32
-        "num_layers": 12,
-        "d_ff": 1024,
-        "context_length": 256,
-        "rope_theta": 10000.0,
-    },
-}
-
-# Smol versions for smoke testing
-SMOL_MODEL_A_CONFIG = {
-    "name": "Smol_Model_A",
-    "description": "Tiny version of Model A for smoke testing",
-    "batch_size": 8,
-    "model_settings": {
-        "vocab_size": 10000,
-        "d_model": 128,
-        "num_heads": 4,
-        "num_layers": 2,
-        "d_ff": 256,
-        "context_length": 64,
-        "rope_theta": 10000.0,
-    },
-}
-
-SMOL_MODEL_B_CONFIG = {
-    "name": "Smol_Model_B",
-    "description": "Tiny version of Model B for smoke testing",
-    "batch_size": 8,
-    "model_settings": {
-        "vocab_size": 10000,
-        "d_model": 96,
-        "num_heads": 3,
-        "num_layers": 3,
-        "d_ff": 384,
-        "context_length": 64,
-        "rope_theta": 10000.0,
-    },
-}
+def load_model_configs() -> dict:
+    """Load model configurations from configs/models.yaml."""
+    config_path = Path(__file__).resolve().parent.parent / "configs" / "models.yaml"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Model config not found: {config_path}")
+    
+    with open(config_path) as f:
+        return yaml.safe_load(f)
 
 
 # =============================================================================
 # Training Configuration
 # =============================================================================
 
+# Default data paths
+DEFAULT_TRAIN_FILE = "tokenized/tinystories_train_fixed.npy"
+DEFAULT_VALID_FILE = "tokenized/tinystories_valid_fixed.npy"
+
+
 def get_base_config(checkpoint_dir: str, smol: bool = False) -> dict:
     """Get base training configuration shared by both models."""
     return {
         # Data paths
-        "train_file": "tokenized/tinystories_train_fixed.npy",
-        "valid_file": "tokenized/tinystories_valid_fixed.npy",
+        "train_file": DEFAULT_TRAIN_FILE,
+        "valid_file": DEFAULT_VALID_FILE,
 
         # W&B logging
         "wandb_entity": "jbmopper-0",
@@ -181,71 +113,6 @@ def get_base_config(checkpoint_dir: str, smol: bool = False) -> dict:
     }
 
 
-def estimate_checkpoint_size_mb(model_settings: dict) -> float:
-    """Estimate checkpoint size in MB (model + optimizer states)."""
-    vocab_size = model_settings["vocab_size"]
-    d_model = model_settings["d_model"]
-    num_layers = model_settings["num_layers"]
-    d_ff = model_settings["d_ff"]
-
-    num_params = (
-        2 * vocab_size * d_model +
-        d_model +
-        num_layers * (
-            2 * d_model +
-            4 * d_model * d_model +
-            3 * d_model * d_ff
-        )
-    )
-
-    # Model (float32) + Adam states (2x float32 for m and v)
-    bytes_per_param = 4 + 4 + 4  # param + m + v
-    total_bytes = num_params * bytes_per_param
-    return total_bytes / (1024 * 1024)
-
-
-def setup_device_and_seeds(seed: int) -> str:
-    """Set up device and random seeds. Returns device string."""
-    if torch.backends.mps.is_available():
-        device = "mps"
-        torch.mps.manual_seed(seed)
-    elif torch.cuda.is_available():
-        device = "cuda"
-        torch.cuda.manual_seed_all(seed)
-    else:
-        device = "cpu"
-
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    print(f"Using device: {device}")
-    print(f"Random seed: {seed}")
-    return device
-
-
-def load_tokens(config: dict) -> tuple[np.ndarray, np.ndarray]:
-    """Load tokenized training and validation data."""
-    train_file = config["train_file"]
-    valid_file = config["valid_file"]
-
-    if not os.path.exists(train_file):
-        raise FileNotFoundError(
-            f"Training data not found: {train_file}\n"
-            "Run from repository root or check path."
-        )
-    if not os.path.exists(valid_file):
-        raise FileNotFoundError(
-            f"Validation data not found: {valid_file}\n"
-            "Run from repository root or check path."
-        )
-
-    tokens = np.load(train_file, mmap_mode='r')
-    valid_tokens = np.load(valid_file, mmap_mode='r')
-
-    print(f"Loaded {len(tokens):,} train tokens, {len(valid_tokens):,} valid tokens")
-    return tokens, valid_tokens
-
-
 def train_model(
     model_config: dict,
     base_config: dict,
@@ -270,45 +137,21 @@ def train_model(
     config["checkpoint_dir"] = model_checkpoint_dir
     os.makedirs(model_checkpoint_dir, exist_ok=True)
 
-    # Calculate and display model info
-    num_params = calculate_params(model_config["model_settings"])
-    ffn_ratio = model_config["model_settings"]["d_ff"] / model_config["model_settings"]["d_model"]
-    checkpoint_size = estimate_checkpoint_size_mb(model_config["model_settings"])
-
-    print("\n" + "=" * 70)
-    print(f"Training: {model_config['name']}")
-    print(f"Description: {model_config['description']}")
-    print(f"Parameters: {num_params / 1e6:.1f}M")
-    print(f"FFN ratio: {ffn_ratio:.2f}x")
-    print(f"Batch size: {model_config['batch_size']}")
-    print(f"Estimated checkpoint size: {checkpoint_size:.0f} MB")
+    # Display model info using shared utility
+    print_model_summary(
+        name=model_config["name"],
+        model_settings=model_config["model_settings"],
+        batch_size=model_config["batch_size"],
+        description=model_config.get("description"),
+    )
     print(f"Checkpoint directory: {model_checkpoint_dir}")
     print(f"W&B run name: {run_name}")
-    print("=" * 70 + "\n")
 
     # Create trainer and run
     trainer = Trainer(TransformerLM, config, tokens, valid_tokens)
     trainer.train_eval_loop()
 
     print(f"\nCompleted training: {model_config['name']}")
-
-
-def calculate_params(model_settings: dict) -> int:
-    """Calculate total parameter count."""
-    vocab_size = model_settings["vocab_size"]
-    d_model = model_settings["d_model"]
-    num_layers = model_settings["num_layers"]
-    d_ff = model_settings["d_ff"]
-
-    return (
-        2 * vocab_size * d_model +
-        d_model +
-        num_layers * (
-            2 * d_model +
-            4 * d_model * d_model +
-            3 * d_model * d_ff
-        )
-    )
 
 
 def main():
@@ -368,8 +211,11 @@ def main():
     # Timestamp for this comparison run
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Set up device and seeds
-    device = setup_device_and_seeds(args.seed)
+    # Set up device and seeds using shared utility
+    device = setup_device(seed=args.seed, prefer_cuda=False)
+
+    # Load model configs from YAML
+    model_configs = load_model_configs()
 
     # Get base config
     base_config = get_base_config(args.checkpoint_dir, smol=args.smol)
@@ -385,17 +231,20 @@ def main():
         base_config["scheduler_cos_iters"] = args.num_iters
         base_config["scheduler_warmup_iters"] = max(1, args.num_iters // 10)
 
-    # Select model configs
+    # Select model configs from YAML
     if args.smol:
-        model_a = SMOL_MODEL_A_CONFIG
-        model_b = SMOL_MODEL_B_CONFIG
+        model_a = model_configs["smol_model_a"]
+        model_b = model_configs["smol_model_b"]
         print("\n*** SMOL MODE: Using tiny models for smoke testing ***\n")
     else:
-        model_a = MODEL_A_CONFIG
-        model_b = MODEL_B_CONFIG
+        model_a = model_configs["model_a"]
+        model_b = model_configs["model_b"]
 
-    # Load data
-    tokens, valid_tokens = load_tokens(base_config)
+    # Load data using shared utility
+    tokens, valid_tokens = load_tokens(
+        base_config["train_file"],
+        base_config["valid_file"],
+    )
 
     # Estimate total disk usage
     models_to_train = []
@@ -425,23 +274,11 @@ def main():
             print("\n" + "-" * 70)
             print("Cleaning up memory before Model B...")
             print("-" * 70)
-            import gc
-            gc.collect()
-            if device == "mps":
-                torch.mps.empty_cache()
-                torch.mps.synchronize()
-            elif device == "cuda":
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-            gc.collect()
-            if device == "mps":
-                torch.mps.empty_cache()
-            elif device == "cuda":
-                torch.cuda.empty_cache()
+            clear_device_cache(device)
             print("Memory cleanup complete.\n")
         
         # Reset seeds for fair comparison
-        setup_device_and_seeds(args.seed)
+        device = setup_device(seed=args.seed, prefer_cuda=False)
         train_model(model_b, base_config, tokens, valid_tokens, device, timestamp)
 
     print("\n" + "=" * 70)

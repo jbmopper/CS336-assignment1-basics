@@ -13,14 +13,14 @@ Usage:
     wandb agent <entity>/<project>/<sweep_id>
 """
 
-from cs336_basics import TransformerLM
-from cs336_basics.training import Trainer
-import wandb
-from pathlib import Path
-import os
-import numpy as np
-import torch
 import argparse
+import os
+from pathlib import Path
+
+import wandb
+
+from cs336_basics import TransformerLM
+from cs336_basics.training import Trainer, setup_device, load_tokens
 
 # Default configuration (will be overridden by sweep)
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -79,42 +79,6 @@ DEFAULT_CONFIG = dict(
 )
 
 
-def set_device_and_seeds(seed: int) -> str:
-    """Set up device and random seeds. Returns device string."""
-    if torch.backends.mps.is_available():
-        device = "mps"
-    elif torch.cuda.is_available():
-        device = "cuda"
-    else:
-        device = "cpu"
-
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    if device == "mps":
-        torch.mps.manual_seed(seed)
-    elif device == "cuda":
-        torch.cuda.manual_seed_all(seed)
-
-    print(f"Using device: {device}")
-    return device
-
-
-def get_tokens(config: dict) -> tuple:
-    """Load tokenized data."""
-    if not os.path.exists(config["train_file"]):
-        raise FileNotFoundError(
-            f"Training tokens not found at {config['train_file']}. "
-            "Run the main training script first to generate tokenized data."
-        )
-
-    tokens = np.load(config["train_file"], mmap_mode="r")
-    valid_tokens = np.load(config["valid_file"], mmap_mode="r")
-
-    print(f"Loaded {len(tokens):,} training tokens, {len(valid_tokens):,} validation tokens")
-    return tokens, valid_tokens
-
-
 def train_sweep():
     """Main training function for sweep runs."""
     # Initialize wandb run - this will get sweep config
@@ -166,13 +130,13 @@ def train_sweep():
         wandb.finish(exit_code=1)
         return
 
-    # Set up device and seeds
-    device = set_device_and_seeds(config["rand_seed"])
+    # Set up device and seeds using shared utility
+    device = setup_device(seed=config["rand_seed"], prefer_cuda=False)
     config["device"] = device
 
-    # Load data
+    # Load data using shared utility
     try:
-        tokens, valid_tokens = get_tokens(config)
+        tokens, valid_tokens = load_tokens(config["train_file"], config["valid_file"])
     except FileNotFoundError as e:
         print(f"Data not found: {e}")
         wandb.finish(exit_code=1)

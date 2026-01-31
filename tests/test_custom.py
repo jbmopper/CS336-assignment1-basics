@@ -3,29 +3,7 @@
 import os
 import tempfile
 import pytest
-from cs336_basics.bpe import train_bpe, save_bpe, Tokenizer
-
-
-def load_bpe(input_path: str | os.PathLike) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-    """Load vocab and merges from directory (matching save_bpe format)."""
-    import json
-    
-    vocab_path = os.path.join(input_path, "vocab.json")
-    merges_path = os.path.join(input_path, "merges.txt")
-    
-    # Load vocab - latin-1 encoded
-    with open(vocab_path, "r", encoding="latin-1") as f:
-        vocab_str = json.load(f)
-    vocab = {int(k): v.encode('latin-1') for k, v in vocab_str.items()}
-    
-    # Load merges - tab-separated, latin-1 encoded
-    merges = []
-    with open(merges_path, "r", encoding="latin-1") as f:
-        for line in f:
-            a, b = line.rstrip('\n').split('\t')
-            merges.append((a.encode('latin-1'), b.encode('latin-1')))
-    
-    return vocab, merges
+from cs336_basics.bpe import train_bpe, save_bpe, load_bpe, Tokenizer
 
 
 class TestSaveLoadBPE:
@@ -47,7 +25,7 @@ class TestSaveLoadBPE:
             
             # Verify files exist
             assert os.path.exists(os.path.join(tmpdir, "vocab.json"))
-            assert os.path.exists(os.path.join(tmpdir, "merges.txt"))
+            assert os.path.exists(os.path.join(tmpdir, "merges.pkl"))
             
             # Load
             loaded_vocab, loaded_merges = load_bpe(tmpdir)
@@ -129,7 +107,7 @@ class TestSaveLoadFilesExist:
         """Test pattern for checking if tokenizer already exists."""
         with tempfile.TemporaryDirectory() as tmpdir:
             vocab_path = os.path.join(tmpdir, "vocab.json")
-            merges_path = os.path.join(tmpdir, "merges.txt")
+            merges_path = os.path.join(tmpdir, "merges.pkl")
             
             # Initially doesn't exist
             assert not (os.path.exists(vocab_path) and os.path.exists(merges_path))

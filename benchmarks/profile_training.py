@@ -13,47 +13,38 @@ import argparse
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
-import torch
+import yaml
 
 from cs336_basics import TransformerLM
-from cs336_basics.training import Trainer
+from cs336_basics.training import (
+    Trainer,
+    setup_device,
+    sync_device,
+    load_tokens,
+    print_model_summary,
+)
 
 
 # =============================================================================
-# Model Configurations (same as train_compare.py)
+# Model Configurations - loaded from configs/models.yaml
 # =============================================================================
 
-MODEL_A_CONFIG = {
-    "name": "Model_A_wide_attn",
-    "description": "Wide attention, low FFN ratio (1.6x), d_head=64",
-    "batch_size": 64,
-    "model_settings": {
-        "vocab_size": 10000,
-        "d_model": 640,
-        "num_heads": 10,  # d_head = 64
-        "num_layers": 10,
-        "d_ff": 1024,
-        "context_length": 256,
-        "rope_theta": 10000.0,
-    },
-}
+def load_model_configs() -> dict:
+    """Load model configurations from configs/models.yaml."""
+    config_path = Path(__file__).resolve().parent.parent / "configs" / "models.yaml"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Model config not found: {config_path}")
+    
+    with open(config_path) as f:
+        return yaml.safe_load(f)
 
-MODEL_B_CONFIG = {
-    "name": "Model_B_standard_ffn",
-    "description": "Standard FFN ratio (4.5x), d_head=32 (potential perf issue)",
-    "batch_size": 48,
-    "model_settings": {
-        "vocab_size": 10000,
-        "d_model": 384,
-        "num_heads": 12,  # d_head = 32
-        "num_layers": 12,
-        "d_ff": 1728,
-        "context_length": 256,
-        "rope_theta": 10000.0,
-    },
-}
+
+# Default data paths
+DEFAULT_TRAIN_FILE = "tokenized/tinystories_train_fixed.npy"
+DEFAULT_VALID_FILE = "tokenized/tinystories_valid_fixed.npy"
 
 
 def get_trainer_config(model_config: dict, device: str, checkpoint_dir: str) -> dict:
@@ -74,28 +65,6 @@ def get_trainer_config(model_config: dict, device: str, checkpoint_dir: str) -> 
     }
 
 
-def load_data():
-    """Load tokenized training data."""
-    train_file = "tokenized/tinystories_train_fixed.npy"
-    valid_file = "tokenized/tinystories_valid_fixed.npy"
-
-    if not os.path.exists(train_file):
-        raise FileNotFoundError(f"Training data not found: {train_file}\nRun from repository root.")
-
-    tokens = np.load(train_file, mmap_mode='r')
-    valid_tokens = np.load(valid_file, mmap_mode='r')
-    print(f"Loaded {len(tokens):,} train tokens, {len(valid_tokens):,} valid tokens")
-    return tokens, valid_tokens
-
-
-def sync_device(device: str):
-    """Synchronize device for accurate timing."""
-    if device == "mps":
-        torch.mps.synchronize()
-    elif device == "cuda":
-        torch.cuda.synchronize()
-
-
 def profile_model(
     model_config: dict,
     tokens: np.ndarray,
@@ -108,12 +77,15 @@ def profile_model(
     model_name = model_config["name"]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    print("\n" + "=" * 60)
-    print(f"Profiling: {model_name}")
-    print(f"Description: {model_config['description']}")
+    # Print model info using shared utility
+    print_model_summary(
+        name=model_name,
+        model_settings=model_config["model_settings"],
+        batch_size=model_config["batch_size"],
+        description=model_config.get("description"),
+    )
     print(f"Device: {device}")
-    print(f"Steps: {num_steps}")
-    print("=" * 60)
+    print(f"Steps to profile: {num_steps}")
     
     # Create trainer
     checkpoint_dir = os.path.join("/tmp", f"profile_ckpt_{model_name}")
@@ -125,10 +97,6 @@ def profile_model(
     num_params = sum(p.numel() for p in trainer.model.parameters())
     d_head = model_config["model_settings"]["d_model"] // model_config["model_settings"]["num_heads"]
     tokens_per_step = model_config["batch_size"] * model_config["model_settings"]["context_length"]
-    
-    print(f"Parameters: {num_params / 1e6:.1f}M")
-    print(f"d_head: {d_head}")
-    print(f"Tokens/step: {tokens_per_step:,}")
     
     # Warmup
     warmup_steps = 5
@@ -228,6 +196,8 @@ def main():
                         help="Number of training steps to profile")
     parser.add_argument("--device", default=None,
                         help="Device (auto-detect if not specified)")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed (default: 42)")
     args = parser.parse_args()
     
     # Validate/create trace dir
@@ -235,30 +205,31 @@ def main():
         print(f"Creating output directory: {args.trace_dir}")
         os.makedirs(args.trace_dir, exist_ok=True)
     
-    # Auto-detect device
+    # Set up device using shared utility (or use specified device)
     if args.device:
         device = args.device
-    elif torch.backends.mps.is_available():
-        device = "mps"
-    elif torch.cuda.is_available():
-        device = "cuda"
+        print(f"Using specified device: {device}")
     else:
-        device = "cpu"
+        device = setup_device(seed=args.seed, prefer_cuda=False)
     
-    print(f"Device: {device}")
     print(f"Output directory: {args.trace_dir}")
     
-    # Load data
-    tokens, valid_tokens = load_data()
+    # Load model configs from YAML
+    model_configs = load_model_configs()
+    model_a = model_configs["model_a"]
+    model_b = model_configs["model_b"]
+    
+    # Load data using shared utility
+    tokens, valid_tokens = load_tokens(DEFAULT_TRAIN_FILE, DEFAULT_VALID_FILE)
     
     # Profile
     results = []
     if args.model in ("A", "both"):
-        r = profile_model(MODEL_A_CONFIG, tokens, valid_tokens, device, args.trace_dir, args.num_steps)
+        r = profile_model(model_a, tokens, valid_tokens, device, args.trace_dir, args.num_steps)
         results.append(r)
     
     if args.model in ("B", "both"):
-        r = profile_model(MODEL_B_CONFIG, tokens, valid_tokens, device, args.trace_dir, args.num_steps)
+        r = profile_model(model_b, tokens, valid_tokens, device, args.trace_dir, args.num_steps)
         results.append(r)
     
     # Comparison
