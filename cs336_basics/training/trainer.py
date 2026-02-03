@@ -211,7 +211,7 @@ class Trainer:
 
         # Get batch
         with torch.profiler.record_function("## BATCH_GET ##"):
-            with timer("Time/Batch getting", log):
+            with timer("Time/Batch getting", log, device=self.config["device"]):
                 inputs, labels = get_batch(
                     self.tokens,
                     self.config["batch_size"],
@@ -221,7 +221,7 @@ class Trainer:
 
         # Forward pass (with optional autocast for mixed precision)
         with torch.profiler.record_function("## FORWARD ##"):
-            with timer("Time/Forward", log):
+            with timer("Time/Forward", log, device=self.config["device"]):
                 self.model.train()
                 if self.use_amp:
                     with torch.autocast(device_type="cuda", dtype=self.amp_dtype):
@@ -231,7 +231,7 @@ class Trainer:
 
         # Loss calculation (with optional autocast for mixed precision)
         with torch.profiler.record_function("## LOSS_CALC ##"):
-            with timer("Time/Loss calc", log):
+            with timer("Time/Loss calc", log, device=self.config["device"]):
                 if self.use_amp:
                     with torch.autocast(device_type="cuda", dtype=self.amp_dtype):
                         loss = crossentropy(out_logits, labels)
@@ -244,7 +244,7 @@ class Trainer:
 
         # Backward pass (with GradScaler for FP16)
         with torch.profiler.record_function("## BACKWARD ##"):
-            with timer("Time/Backward", log):
+            with timer("Time/Backward", log, device=self.config["device"]):
                 self.optimizer.zero_grad(set_to_none=True)
                 if self.scaler is not None:
                     self.scaler.scale(loss).backward()
@@ -253,7 +253,7 @@ class Trainer:
 
         # Gradient clipping - unscale first if using GradScaler
         with torch.profiler.record_function("## GRAD_NORM ##"):
-            with timer("Time/Grad norm calc", log):
+            with timer("Time/Grad norm calc", log, device=self.config["device"]):
                 if self.scaler is not None:
                     # Unscale gradients before clipping
                     self.scaler.unscale_(self.optimizer)
@@ -266,7 +266,7 @@ class Trainer:
         log["Grad/Norm (clipped)"] = min(grad_norm.item(), self.config["gradient_clip"])
 
         with torch.profiler.record_function("## GRAD_CLIP ##"):
-            with timer("Time/Grad clip", log):
+            with timer("Time/Grad clip", log, device=self.config["device"]):
                 gradient_clipping(
                     self.model.parameters(),
                     self.config["gradient_clip"],
@@ -286,7 +286,7 @@ class Trainer:
             param_group["lr"] = lr
 
         with torch.profiler.record_function("## OPTIMIZER_STEP ##"):
-            with timer("Time/Optimizer step", log):
+            with timer("Time/Optimizer step", log, device=self.config["device"]):
                 if self.scaler is not None:
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
@@ -294,6 +294,8 @@ class Trainer:
                     self.optimizer.step()
 
         # Efficient timing: one synchronization at the end of the step
+        # Note: We now sync inside timer() blocks for accurate profiling, 
+        # but this final sync ensures total_step_time is correct even if timers were disabled
         if self.config["device"] == "mps":
             torch.mps.synchronize()
         elif self.config["device"] == "cuda":
@@ -323,7 +325,7 @@ class Trainer:
         eval_batches = self.config.get("eval_batches", 1)
         total_loss = 0.0
 
-        with timer("Time/Eval batch getting", log):
+        with timer("Time/Eval batch getting", log, device=self.config["device"]):
             self.model.eval()
             eval_batches = max(1, int(eval_batches))
             eval_inputs = []
@@ -338,7 +340,7 @@ class Trainer:
                 eval_inputs.append(batch_inputs)
                 eval_labels.append(batch_labels)
 
-        with timer("Time/Eval forward pass", log):
+        with timer("Time/Eval forward pass", log, device=self.config["device"]):
             with torch.no_grad():
                 for batch_inputs, batch_labels in zip(eval_inputs, eval_labels, strict=True):
                     if self.use_amp:
@@ -359,7 +361,7 @@ class Trainer:
     def _save_latest_checkpoint(self, step):
         """Save latest checkpoint (for crash recovery)."""
         log = {}
-        with timer("Time/Checkpoint save (latest)", log):
+        with timer("Time/Checkpoint save (latest)", log, device=self.config["device"]):
             save_checkpoint(
                 self.model,
                 self.optimizer,
@@ -372,7 +374,7 @@ class Trainer:
     def _save_snapshot_checkpoint(self, step):
         """Save snapshot checkpoint at save_every intervals."""
         log = {}
-        with timer("Time/Checkpoint save (snapshot)", log):
+        with timer("Time/Checkpoint save (snapshot)", log, device=self.config["device"]):
             save_checkpoint(
                 self.model,
                 self.optimizer,
@@ -386,7 +388,7 @@ class Trainer:
     def _save_best_checkpoint(self, step):
         """Save best checkpoint based on eval loss."""
         log = {}
-        with timer("Time/Checkpoint save (best)", log):
+        with timer("Time/Checkpoint save (best)", log, device=self.config["device"]):
             save_checkpoint(
                 self.model,
                 self.optimizer,
@@ -399,7 +401,7 @@ class Trainer:
     def _save_final_checkpoint(self, step):
         """Save final checkpoint after training."""
         log = {}
-        with timer("Time/Checkpoint save (final)", log):
+        with timer("Time/Checkpoint save (final)", log, device=self.config["device"]):
             save_checkpoint(
                 self.model,
                 self.optimizer,
