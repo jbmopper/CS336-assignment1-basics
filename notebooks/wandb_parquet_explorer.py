@@ -8,8 +8,9 @@ app = marimo.App(width="full")
 def _():
     import marimo as mo
     import polars as pl
+    import plotly.express as px
     from pathlib import Path
-    return Path, mo, pl
+    return Path, mo, pl, px
 
 
 @app.cell(hide_code=True)
@@ -25,7 +26,7 @@ def _(mo):
 @app.cell
 def _(mo):
     parquet_path = mo.ui.text(
-        value="notebooks/benchmark_results/wandb_lr_sweep_finished.parquet",
+        value="notebooks/benchmark_results/lr_sweep_history.parquet",
         label="Parquet file path",
         placeholder="notebooks/benchmark_results/",
     )
@@ -72,202 +73,89 @@ def _(Path, mo, parquet_path, pl, reload_data):
 
 
 @app.cell
+def _(df_raw, mo, px):
+    mo.stop(df_raw is None)
+
+    plot = mo.md("Select a valid parquet file to view plots.")
+    if df_raw is not None:
+        # Check for required columns
+        required_cols = ["_step", "Eval Loss", "run_name"]
+        missing = [c for c in required_cols if c not in df_raw.columns]
+
+        if missing:
+            plot = mo.md(f"⚠️ Cannot plot: Missing columns {missing}")
+        else:
+            # Convert to pandas for plotly
+            # Ensure we have the LR column if available for hover
+            hover_data = []
+            if "config.scheduler_lr_max" in df_raw.columns:
+                hover_data.append("config.scheduler_lr_max")
+
+            # Plotly Express
+            fig = px.line(
+                df_raw,
+                x="_step",
+                y="Eval Loss",
+                color="run_name",
+                hover_data=hover_data,
+                title="Eval Loss per Iteration by Run",
+                labels={"_step": "Iteration", "Eval Loss": "Eval Loss"},
+            )
+            plot = mo.ui.plotly(fig)
+    else:
+        fig = None
+
+    plot
+    return plot, fig
+
+
+@app.cell
+def _(df_raw, fig, mo, pl, plot):
+    mo.stop(df_raw is None)
+    mo.stop(fig is None)
+
+    selected_runs_summary = None
+    if plot.value and "points" in plot.value and len(plot.value["points"]) > 0:
+        # Extract run names from selected points
+        selected_curve_indices = {p["curveNumber"] for p in plot.value["points"]}
+        selected_run_names = {fig.data[i].name for i in selected_curve_indices}
+        
+        if selected_run_names:
+            # Filter
+            filtered_df = df_raw.filter(pl.col("run_name").is_in(selected_run_names))
+            
+            # Aggregations
+            aggs = [
+                pl.col("Eval Loss").max().alias("Max Eval Loss")
+            ]
+            
+            if "config.scheduler_lr_max" in df_raw.columns:
+                aggs.append(pl.col("config.scheduler_lr_max").max().alias("Max LR"))
+            elif "LR" in df_raw.columns:
+                aggs.append(pl.col("LR").max().alias("Max LR"))
+
+            selected_runs_summary = (
+                filtered_df.group_by("run_name")
+                .agg(aggs)
+                .sort("Max Eval Loss", descending=True)
+            )
+    
+    # Display the filtered dataframe or message
+    if selected_runs_summary is not None:
+        output = mo.vstack([
+            mo.md(f"### Summary for {selected_runs_summary.height} selected runs"),
+            selected_runs_summary
+        ])
+    else:
+        output = mo.md("Select traces on the plot (box/lasso select) to view run summary.")
+        
+    output
+    return (output, selected_runs_summary)
+
+
+@app.cell
 def _(df_raw):
     df_raw
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md("""
-    ## Load Training History
-
-    Load iteration-level history to analyze training dynamics.
-    You can either:
-    1. **Load from parquet** - Fast, use a pre-fetched history file
-    2. **Fetch from W&B** - Slower, fetches directly from W&B API
-
-    To create a history parquet file, run:
-    ```bash
-    uv run notebooks/wandb_fetch_runs.py \\
-      --project jbmopper-0/assignment1-basics-cs336_basics \\
-      --sweep-ids <sweep_id> \\
-      --include-history \\
-      --history-keys "Eval Loss,Loss,LR,_step" \\
-      --history-output notebooks/benchmark_results/lr_sweep_history.parquet \\
-      --output notebooks/benchmark_results/lr_sweep_runs.parquet
-    ```
-    """)
-    return
-
-
-@app.cell
-def _(mo):
-    history_source = mo.ui.radio(
-        options={"parquet": "Load from parquet file", "wandb": "Fetch from W&B API"},
-        value="parquet",
-        label="History source",
-    )
-    history_parquet_path = mo.ui.text(
-        value="notebooks/benchmark_results/lr_sweep_history.parquet",
-        label="History parquet file path",
-    )
-    load_history_btn = mo.ui.button(label="Load History")
-    mo.vstack([
-        history_source,
-        history_parquet_path,
-        load_history_btn,
-    ])
-    return history_parquet_path, history_source, load_history_btn
-
-
-@app.cell
-def _(mo):
-    # W&B fetch options (only used if source is "wandb")
-    wandb_project_input = mo.ui.text(
-        value="jbmopper-0/assignment1-basics-cs336_basics",
-        label="W&B project (entity/project)",
-    )
-    history_keys_input = mo.ui.text(
-        value="Eval Loss,Loss,LR,_step",
-        label="History keys (comma-separated)",
-    )
-    mo.md("**W&B API options** (only used if fetching from W&B):")
-    mo.vstack([wandb_project_input, history_keys_input])
-    return history_keys_input, wandb_project_input
-
-
-@app.cell
-def _(
-    Path,
-    df_raw,
-    history_keys_input,
-    history_parquet_path,
-    history_source,
-    load_history_btn,
-    mo,
-    pl,
-    wandb_project_input,
-):
-    _ = load_history_btn.value
-    df_history = None
-    history_status = None
-
-    if history_source.value == "parquet":
-        # Load from parquet file
-        path = Path(history_parquet_path.value.strip()).expanduser()
-        if not path.exists():
-            history_status = mo.md(f"❌ History file not found: `{path}`")
-        else:
-            try:
-                df_history = pl.read_parquet(path)
-                history_status = mo.md(
-                    f"✅ Loaded history from `{path.name}` with {df_history.height} rows."
-                )
-            except Exception as exc:
-                history_status = mo.md(f"❌ Failed to load history parquet: {exc}")
-    else:
-        # Fetch from W&B API
-        import wandb
-
-        mo.stop(df_raw is None, mo.md("⚠️ Load a runs parquet file first."))
-
-        history_keys = [k.strip() for k in history_keys_input.value.split(",") if k.strip()]
-        run_ids = df_raw.select("run_id").to_series().to_list()
-        lr_map = dict(
-            zip(
-                df_raw.select("run_id").to_series().to_list(),
-                df_raw.select("config.scheduler_lr_max").to_series().to_list(),
-            )
-        )
-        run_name_map = dict(
-            zip(
-                df_raw.select("run_id").to_series().to_list(),
-                df_raw.select("run_name").to_series().to_list(),
-            )
-        )
-
-        api = wandb.Api()
-        project_path = wandb_project_input.value.strip()
-
-        history_rows = []
-        for run_id in run_ids:
-            try:
-                run = api.run(f"{project_path}/{run_id}")
-                for row in run.scan_history(keys=history_keys):
-                    row["run_id"] = run_id
-                    row["run_name"] = run_name_map.get(run_id, run_id)
-                    row["config.scheduler_lr_max"] = lr_map.get(run_id)
-                    history_rows.append(row)
-            except Exception as e:
-                print(f"Failed to fetch {run_id}: {e}")
-
-        df_history = pl.from_dicts(history_rows) if history_rows else None
-        history_status = (
-            mo.md(f"✅ Fetched {len(history_rows)} history rows from {len(run_ids)} runs.")
-            if history_rows
-            else mo.md("❌ No history rows fetched.")
-        )
-
-    history_status
-    return (df_history,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md("""
-    ## Eval Loss by Iteration
-
-    Line chart showing eval loss over iterations, with one line per run.
-    Runs are colored by learning rate to help identify which LR causes instability.
-    """)
-    return
-
-
-@app.cell
-def _(df_history, mo, pl):
-    import altair as alt
-
-    mo.stop(df_history is None, mo.md("⚠️ Load history data first."))
-
-    # Filter to only rows with Eval Loss
-    df_plot = df_history.filter(pl.col("Eval Loss").is_not_null())
-    mo.stop(df_plot.height == 0, mo.md("⚠️ No Eval Loss data in history."))
-
-    # Normalize LR column name (handle both "lr_max" and "config.scheduler_lr_max")
-    lr_col = "config.scheduler_lr_max" if "config.scheduler_lr_max" in df_plot.columns else "lr_max"
-    if lr_col not in df_plot.columns:
-        mo.stop(True, mo.md("⚠️ No learning rate column found in history data."))
-
-    # Rename to consistent name for plotting
-    df_plot = df_plot.with_columns(pl.col(lr_col).alias("lr_max"))
-
-    # Create a label combining run name and LR for the legend
-    df_plot = df_plot.with_columns(
-        pl.format("LR={} ({})", pl.col("lr_max"), pl.col("run_name")).alias("run_label")
-    )
-
-    # Sort by LR for consistent legend ordering
-    df_plot = df_plot.sort("lr_max", "_step")
-
-    chart = (
-        alt.Chart(df_plot.to_pandas())
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("_step:Q", title="Iteration"),
-            y=alt.Y("Eval Loss:Q", title="Eval Loss"),
-            color=alt.Color(
-                "run_label:N",
-                title="Run (by LR)",
-                sort=alt.EncodingSortField(field="lr_max", order="ascending"),
-            ),
-            tooltip=["run_name", "lr_max", "_step", "Eval Loss"],
-        )
-        .properties(width=800, height=500, title="Eval Loss vs Iteration (by Learning Rate)")
-        .interactive()
-    )
-
-    mo.ui.altair_chart(chart)
     return
 
 
