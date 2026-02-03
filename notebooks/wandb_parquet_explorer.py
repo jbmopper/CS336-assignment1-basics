@@ -73,27 +73,67 @@ def _(Path, mo, parquet_path, pl, reload_data):
 
 
 @app.cell
-def _(df_raw, mo, px):
+def _(df_raw, mo):
     mo.stop(df_raw is None)
 
+    # Identify sweep ID column
+    sweep_id_col = None
+    for col in ["sweep_id", "sweep", "Sweep"]:
+        if col in df_raw.columns:
+            sweep_id_col = col
+            break
+
+    # Get unique sweep IDs if available
+    sweep_selector = None
+    if sweep_id_col is not None:
+        unique_sweeps = sorted(df_raw[sweep_id_col].unique().to_list())
+        sweep_selector = mo.ui.multiselect(
+            options=unique_sweeps,
+            value=unique_sweeps,  # Select all by default
+            label=f"Select Sweep IDs ({len(unique_sweeps)} total)"
+        )
+
+    if sweep_selector is not None:
+        mo.vstack([
+            mo.md("### Filter by Sweep ID"),
+            sweep_selector
+        ])
+    else:
+        mo.md("⚠️ No sweep ID column found in data")
+
+    return sweep_id_col, sweep_selector
+
+
+@app.cell
+def _(df_raw, mo, pl, px, sweep_id_col, sweep_selector):
+    mo.stop(df_raw is None)
+
+    # Filter data by selected sweeps
+    df_filtered = df_raw
+    if sweep_selector is not None and len(sweep_selector.value) > 0:
+        df_filtered = df_raw.filter(pl.col(sweep_id_col).is_in(sweep_selector.value))
+
     plot = mo.md("Select a valid parquet file to view plots.")
-    if df_raw is not None:
+    fig = None
+
+    if df_filtered.height > 0:
         # Check for required columns
         required_cols = ["_step", "Eval Loss", "run_name"]
-        missing = [c for c in required_cols if c not in df_raw.columns]
+        missing = [c for c in required_cols if c not in df_filtered.columns]
 
         if missing:
             plot = mo.md(f"⚠️ Cannot plot: Missing columns {missing}")
         else:
-            # Convert to pandas for plotly
             # Ensure we have the LR column if available for hover
             hover_data = []
-            if "config.scheduler_lr_max" in df_raw.columns:
+            if "config.scheduler_lr_max" in df_filtered.columns:
                 hover_data.append("config.scheduler_lr_max")
+            if sweep_id_col is not None and sweep_id_col in df_filtered.columns:
+                hover_data.append(sweep_id_col)
 
             # Plotly Express
             fig = px.line(
-                df_raw,
+                df_filtered,
                 x="_step",
                 y="Eval Loss",
                 color="run_name",
@@ -103,59 +143,48 @@ def _(df_raw, mo, px):
             )
             plot = mo.ui.plotly(fig)
     else:
-        fig = None
+        plot = mo.md("⚠️ No data to plot with selected filters")
 
     plot
-    return plot, fig
+    return plot, fig, df_filtered
 
 
 @app.cell
-def _(df_raw, fig, mo, pl, plot):
-    mo.stop(df_raw is None)
-    mo.stop(fig is None)
+def _(df_filtered, mo, pl):
+    mo.stop(df_filtered is None or df_filtered.height == 0)
 
-    selected_runs_summary = None
-    if plot.value and "points" in plot.value and len(plot.value["points"]) > 0:
-        # Extract run names from selected points
-        selected_curve_indices = {p["curveNumber"] for p in plot.value["points"]}
-        selected_run_names = {fig.data[i].name for i in selected_curve_indices}
-        
-        if selected_run_names:
-            # Filter
-            filtered_df = df_raw.filter(pl.col("run_name").is_in(selected_run_names))
-            
-            # Aggregations
-            aggs = [
-                pl.col("Eval Loss").max().alias("Max Eval Loss")
-            ]
-            
-            if "config.scheduler_lr_max" in df_raw.columns:
-                aggs.append(pl.col("config.scheduler_lr_max").max().alias("Max LR"))
-            elif "LR" in df_raw.columns:
-                aggs.append(pl.col("LR").max().alias("Max LR"))
+    # Create summary dataframe with max values for each run
+    aggs = [
+        pl.col("Eval Loss").max().alias("Max Eval Loss")
+    ]
 
-            selected_runs_summary = (
-                filtered_df.group_by("run_name")
-                .agg(aggs)
-                .sort("Max Eval Loss", descending=True)
-            )
-    
-    # Display the filtered dataframe or message
-    if selected_runs_summary is not None:
-        output = mo.vstack([
-            mo.md(f"### Summary for {selected_runs_summary.height} selected runs"),
-            selected_runs_summary
-        ])
-    else:
-        output = mo.md("Select traces on the plot (box/lasso select) to view run summary.")
-        
-    output
-    return (output, selected_runs_summary)
+    # Add learning rate column if available
+    lr_col = None
+    if "config.scheduler_lr_max" in df_filtered.columns:
+        lr_col = "config.scheduler_lr_max"
+        aggs.append(pl.col(lr_col).max().alias("Max Learning Rate"))
+    elif "LR" in df_filtered.columns:
+        lr_col = "LR"
+        aggs.append(pl.col(lr_col).max().alias("Max Learning Rate"))
+
+    summary_df = (
+        df_filtered
+        .group_by("run_name")
+        .agg(aggs)
+        .sort("Max Eval Loss", descending=True)
+    )
+
+    mo.vstack([
+        mo.md(f"### Summary of {summary_df.height} runs (reduced along iteration)"),
+        mo.md(f"Showing max eval loss and max learning rate for each run"),
+        summary_df
+    ])
+    return
 
 
 @app.cell
-def _(df_raw):
-    df_raw
+def _(df_filtered):
+    df_filtered
     return
 
 
