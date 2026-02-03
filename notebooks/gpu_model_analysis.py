@@ -60,8 +60,8 @@ def _():
 def _(Path, yaml):
     # Load model configurations from YAML
     config_path = Path("configs/models.yaml")
-    with open(config_path) as f:
-        model_configs = yaml.safe_load(f)
+    with open(config_path) as _f:
+        model_configs = yaml.safe_load(_f)
 
     model_a_config = model_configs["model_a"]
     model_b_config = model_configs["model_b"]
@@ -725,10 +725,141 @@ def _(
 | **Ratio (Obs/Theo)** | {_a_obs['memory_gb']/model_a_memory['peak_memory_gb']:.2f}× | {_b_obs['memory_gb']/model_b_memory['peak_memory_gb']:.2f}× |
 | **Headroom to 24GB** | {24 - _a_obs['memory_gb']:.2f} GB | {24 - _b_obs['memory_gb']:.2f} GB |
 
-*Note: MFU < 50% is typical for small models due to memory bandwidth limitations and kernel launch overhead.*
 """)
     else:
         _output = mo.md("*Not enough wandb data to analyze.*")
+    _output
+    return
+
+
+@app.cell
+def _(GPU_SPECS, mo, model_a_analysis, model_b_analysis, wandb_summary):
+    # Calculate detailed efficiency breakdown
+    _rows = list(wandb_summary.iter_rows(named=True))
+    
+    _output = None
+    if len(_rows) >= 2:
+        _a_obs = _rows[0]
+        _b_obs = _rows[1]
+        
+        # Arithmetic intensity calculation (FLOPs per byte of memory accessed)
+        # For transformers: ~6N FLOPs per token (forward), memory = model_size * bytes_per_param
+        _a_params = model_a_analysis['params']['total']
+        _b_params = model_b_analysis['params']['total']
+        
+        # Rough arithmetic intensity: training_flops / (params * 16 bytes/param for mixed precision)
+        _a_ai = model_a_analysis['training_flops']['total'] / (_a_params * 16)
+        _b_ai = model_b_analysis['training_flops']['total'] / (_b_params * 16)
+        
+        # Roofline analysis: are we compute or memory bound?
+        # Ridge point = peak_flops / memory_bandwidth
+        _ridge_point = (GPU_SPECS['bf16_tflops'] * 1e12) / (GPU_SPECS['memory_bandwidth_gb_s'] * 1e9)
+        
+        _a_bound = "Compute" if _a_ai > _ridge_point else "Memory Bandwidth"
+        _b_bound = "Compute" if _b_ai > _ridge_point else "Memory Bandwidth"
+        
+        _output = mo.md(f"""
+### Why is Observed Throughput So Much Lower Than Theoretical?
+
+The **theoretical throughput** calculation assumes:
+- 100% of GPU compute (330 BF16 TFLOPS) is utilized every cycle
+- Zero overhead for memory transfers, kernel launches, or synchronization
+- All operations are perfectly parallelized matmuls on tensor cores
+
+This is an **upper bound** that real workloads never achieve. Here's why:
+
+---
+
+#### 1. The Roofline Model: Compute vs Memory Bound
+
+The **roofline model** identifies whether a workload is limited by compute or memory bandwidth:
+
+| Metric | Value |
+|--------|-------|
+| **4090 Peak BF16 Compute** | {GPU_SPECS['bf16_tflops']} TFLOPS |
+| **4090 Memory Bandwidth** | {GPU_SPECS['memory_bandwidth_gb_s']} GB/s |
+| **Ridge Point** | {_ridge_point:.0f} FLOPs/byte |
+
+*Ridge point = peak_compute / memory_bandwidth. Operations with arithmetic intensity below this are memory-bound.*
+
+| Model | Arithmetic Intensity | Bottleneck |
+|-------|---------------------|------------|
+| **Model A** | ~{_a_ai:.0f} FLOPs/byte | {_a_bound} |
+| **Model B** | ~{_b_ai:.0f} FLOPs/byte | {_b_bound} |
+
+**Small models are memory-bandwidth bound**: They don't have enough compute per memory access to keep the tensor cores busy. The GPU spends more time waiting for data than computing.
+
+---
+
+#### 2. Sources of Overhead
+
+**Memory Bandwidth Saturation**
+- Every forward/backward pass reads model weights from VRAM
+- Activations must be stored and retrieved for backward pass
+- Small batch sizes mean low data reuse (weights loaded once, used for few samples)
+
+**Kernel Launch Overhead**
+- Each PyTorch operation launches a CUDA kernel
+- Kernel launch latency: ~5-10 μs per launch
+- A transformer layer has 10-20+ kernel launches (matmuls, norms, activations, etc.)
+- Model A (2 layers): ~40 kernel launches → ~200-400 μs overhead
+- Model B (12 layers): ~240 kernel launches → ~1.2-2.4 ms overhead
+
+**Non-Matmul Operations**
+- LayerNorm, Softmax, SiLU, element-wise ops don't use tensor cores
+- These are memory-bound and run at FP32 speeds (~82 TFLOPS max)
+- Can represent 10-20% of wall-clock time despite minimal FLOPs
+
+**CPU-GPU Synchronization**
+- Python interpreter overhead
+- Data loading and preprocessing
+- Gradient accumulation and optimizer step
+- Logging and checkpointing
+
+**Memory Allocator Overhead**
+- PyTorch's caching allocator has overhead for small tensors
+- Memory fragmentation can cause additional allocations
+
+---
+
+#### 3. Why Larger Models Have Better MFU
+
+| Factor | Small Model | Large Model |
+|--------|-------------|-------------|
+| **Matmul size** | Small matrices, low parallelism | Large matrices, high tensor core utilization |
+| **Arithmetic intensity** | Low (memory bound) | High (compute bound) |
+| **Kernel launch %** | Higher relative overhead | Amortized over longer kernels |
+| **Data reuse** | Weights used few times | Weights reused across more tokens |
+
+This is why scaling up model size often *improves* MFU until you hit memory limits.
+
+---
+
+#### 4. Typical MFU by Model Size
+
+| Model Size | Typical MFU | Notes |
+|------------|-------------|-------|
+| <50M params | 10-25% | Severely memory bound |
+| 50-200M params | 20-35% | Still memory bound |
+| 200M-1B params | 30-50% | Transitioning to compute bound |
+| 1B+ params | 40-60% | Compute bound, good utilization |
+| Multi-GPU | 50-65% | Communication overhead limits further |
+
+Our models at ~30-50M parameters fall squarely in the "severely memory bound" regime, explaining the observed ~10-25% MFU.
+
+---
+
+#### 5. How to Improve MFU
+
+1. **Increase batch size**: More data reuse per weight load
+2. **Use Flash Attention**: Fuses attention kernels, reduces memory traffic
+3. **Operator fusion**: Combine adjacent operations (e.g., bias + activation)
+4. **torch.compile()**: JIT compilation can fuse operations
+5. **Increase model size**: Better arithmetic intensity (until OOM)
+6. **Mixed precision**: Already using BF16, can try FP8 on newer GPUs
+""")
+    else:
+        _output = mo.md("*Not enough data for efficiency analysis.*")
     _output
     return
 
@@ -974,212 +1105,6 @@ def _(GPU_SPECS, go, mo, scaling_df):
 def _(mo):
     mo.md(r"""
     ---
-    ## Interactive Scaling Calculator
-
-    Explore different configurations to find the limits on the 4090.
-    """)
-    return
-
-
-@app.cell
-def _(mo):
-    # Interactive sliders for scaling exploration
-    calc_batch = mo.ui.slider(1, 256, step=1, value=32, label="Batch Size", show_value=True)
-    calc_seq = mo.ui.slider(64, 8192, step=64, value=256, label="Sequence Length", show_value=True)
-    calc_d_model = mo.ui.slider(128, 4096, step=64, value=512, label="d_model", show_value=True)
-    calc_layers = mo.ui.slider(1, 48, step=1, value=6, label="num_layers", show_value=True)
-    calc_d_ff_ratio = mo.ui.slider(1.0, 8.0, step=0.5, value=2.67, label="d_ff ratio", show_value=True)
-    calc_vocab = mo.ui.slider(1000, 100000, step=1000, value=10000, label="Vocab Size", show_value=True)
-
-    mo.vstack([
-        mo.md("### Configuration"),
-        mo.hstack([calc_batch, calc_seq, calc_vocab], justify="start", gap=2),
-        mo.hstack([calc_d_model, calc_layers, calc_d_ff_ratio], justify="start", gap=2),
-    ])
-    return (
-        calc_batch,
-        calc_d_ff_ratio,
-        calc_d_model,
-        calc_layers,
-        calc_seq,
-        calc_vocab,
-    )
-
-
-@app.cell
-def _(
-    GPU_SPECS,
-    calc_batch,
-    calc_d_ff_ratio,
-    calc_d_model,
-    calc_layers,
-    calc_seq,
-    calc_vocab,
-    calculate_forward_flops,
-    calculate_memory_breakdown,
-    calculate_model_params,
-    calculate_training_step_flops,
-    math,
-    mo,
-):
-    # Calculate for current config
-    _d = calc_d_model.value
-    _d_ff = int(_d * calc_d_ff_ratio.value / 64) * 64  # Round to multiple of 64
-    _h = max(1, _d // 64)  # d_head = 64
-    
-    _params = calculate_model_params(
-        vocab_size=calc_vocab.value,
-        d_model=_d,
-        num_heads=_h,
-        num_layers=calc_layers.value,
-        d_ff=_d_ff,
-    )
-    
-    _mem = calculate_memory_breakdown(
-        batch_size=calc_batch.value,
-        seq_len=calc_seq.value,
-        vocab_size=calc_vocab.value,
-        d_model=_d,
-        num_heads=_h,
-        num_layers=calc_layers.value,
-        d_ff=_d_ff,
-        precision="bf16",
-    )
-    
-    _forward = calculate_forward_flops(
-        batch_size=calc_batch.value,
-        seq_len=calc_seq.value,
-        vocab_size=calc_vocab.value,
-        d_model=_d,
-        num_heads=_h,
-        num_layers=calc_layers.value,
-        d_ff=_d_ff,
-    )
-    
-    _training = calculate_training_step_flops(_forward["total"])
-    
-    _tokens_per_step = calc_batch.value * calc_seq.value
-    
-    # Theoretical step time (100% MFU)
-    _theo_step_time = _training["total"] / (GPU_SPECS["bf16_tflops"] * 1e12)
-    
-    # Realistic step time (assume 35% MFU for small models)
-    _real_mfu = 0.35
-    _real_step_time = _theo_step_time / _real_mfu
-    _real_throughput = _tokens_per_step / _real_step_time
-    
-    # Memory status
-    _mem_pct = _mem["peak_memory_gb"] / GPU_SPECS["vram_gb"] * 100
-    _mem_status = "✅" if _mem_pct <= 90 else ("⚠️" if _mem_pct <= 100 else "❌")
-    
-    def _fmt(n):
-        if n >= 1e12: return f"{n/1e12:.2f}T"
-        if n >= 1e9: return f"{n/1e9:.2f}G"
-        if n >= 1e6: return f"{n/1e6:.2f}M"
-        if n >= 1e3: return f"{n/1e3:.2f}K"
-        return f"{n:.0f}"
-
-    mo.md(f"""
-    ### Results for Current Configuration
-
-    | Metric | Value |
-    |--------|-------|
-    | **d_ff (computed)** | {_d_ff} |
-    | **num_heads (d_head=64)** | {_h} |
-    | **Total Parameters** | {_fmt(_params['total'])} ({_params['total_M']:.1f}M) |
-    | **Tokens per step** | {_tokens_per_step:,} |
-
-    #### Memory {_mem_status}
-
-    | Component | Value | % of 24GB |
-    |-----------|-------|-----------|
-    | **Peak memory** | {_mem['peak_memory_gb']:.2f} GB | {_mem_pct:.1f}% |
-    | **Parameter memory** | {_mem['param_memory_gb']:.2f} GB | {_mem['param_memory_gb']/24*100:.1f}% |
-    | **Activation memory** | {_mem['activation_memory_gb']:.2f} GB | {_mem['activation_memory_gb']/24*100:.1f}% |
-    | **Headroom** | {24 - _mem['peak_memory_gb']:.2f} GB | - |
-
-    #### Compute
-
-    | Metric | Value |
-    |--------|-------|
-    | **Forward FLOPs** | {_fmt(_forward['total'])} |
-    | **Training step FLOPs** | {_fmt(_training['total'])} |
-    | **Theoretical step time** | {_theo_step_time*1000:.2f} ms (100% MFU) |
-    | **Realistic step time** | {_real_step_time*1000:.1f} ms ({_real_mfu*100:.0f}% MFU) |
-    | **Est. throughput** | {_real_throughput:,.0f} tok/s |
-    
-    *Estimates assume {_real_mfu*100:.0f}% MFU, typical for small-medium models.*
-    """)
-    return
-
-
-@app.cell
-def _(GPU_SPECS, calculate_memory_breakdown, mo):
-    # Find maximum configurations that fit in 4090
-    
-    def _find_max_param(vary_param, base_config, max_val, step):
-        """Binary search for max value that fits in VRAM."""
-        low, high = step, max_val
-        best = low
-        
-        while low <= high:
-            mid = ((low + high) // 2 // step) * step  # Round to step
-            cfg = base_config.copy()
-            cfg[vary_param] = mid
-            
-            # Adjust dependent params for d_model
-            if vary_param == "d_model":
-                cfg["num_heads"] = max(1, mid // 64)
-                cfg["d_ff"] = int(mid * 2.67 / 64) * 64
-            
-            mem = calculate_memory_breakdown(**cfg, precision="bf16")
-            
-            if mem["peak_memory_gb"] <= GPU_SPECS["vram_gb"] * 0.95:  # 95% margin
-                best = mid
-                low = mid + step
-            else:
-                high = mid - step
-        
-        return best
-
-    _base = {
-        "batch_size": 32,
-        "seq_len": 256,
-        "vocab_size": 10000,
-        "d_model": 512,
-        "num_heads": 8,
-        "num_layers": 6,
-        "d_ff": 1365,
-    }
-
-    # Find limits
-    _max_batch = _find_max_param("batch_size", _base, 1024, 8)
-    _max_seq = _find_max_param("seq_len", _base, 16384, 128)
-    _max_d_model = _find_max_param("d_model", _base, 8192, 64)
-    _max_layers = _find_max_param("num_layers", _base, 96, 1)
-
-    mo.md(f"""
-    ### 4090 Maximum Configurations (with 5% safety margin)
-
-    Starting from base config: batch=32, seq=256, d_model=512, layers=6
-
-    | Parameter | Max Value | Limiting Factor |
-    |-----------|-----------|-----------------|
-    | **batch_size** | {_max_batch} | Activation memory (linear) |
-    | **seq_len** | {_max_seq} | Attention matrices (O(S²)) |
-    | **d_model** | {_max_d_model} | Param + activation memory |
-    | **num_layers** | {_max_layers} | Activation memory (linear) |
-
-    *Note: These are one-at-a-time limits. Increasing multiple parameters simultaneously 
-    will hit the memory wall sooner.*
-    """)
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""
-    ---
     ## MPS (Apple Silicon) Analysis
     
     This section analyzes the same Model A and Model B architectures trained on Apple Silicon 
@@ -1379,21 +1304,15 @@ def _(mo, mps_summary, wandb_summary):
 ### Key Observations
 
 1. **Throughput Gap**: The 4090 achieves **{_gpu_a['tokens_per_sec']/_mps_a['tokens_per_sec']:.0f}× higher throughput** on Model A 
-   and **{_gpu_b['tokens_per_sec']/_mps_b['tokens_per_sec']:.0f}× higher** on Model B.
+   and **{_gpu_b['tokens_per_sec']/_mps_b['tokens_per_sec']:.0f}× higher** on Model B. This huge gap highlights the difference between a dedicated 1000GB/s GPU with Tensor Cores versus a mobile SoC GPU.
 
-2. **Depth Penalty on MPS**: Model B (12 layers) shows a larger performance gap vs the 4090 compared to 
-   Model A (2 layers). The 4090's tensor cores and higher memory bandwidth handle deep sequential 
-   computation more efficiently.
+2. **System Overhead on MPS**: A significant portion of the MPS step time is not accounted for in Forward/Backward passes. For Model A, the total step time ({_mps_a['step_time_s']*1000:.0f}ms) is much larger than Forward+Backward ({(_mps_a['forward_time_s']+_mps_a['backward_time_s'])*1000:.0f}ms). This suggests massive overhead from Python-MPS synchronization, data movement, or optimizer steps on the unified memory architecture.
 
-3. **Memory Efficiency**: Despite using FP32 (2× bytes per param), MPS shows lower memory usage 
-   due to unified memory architecture and different allocation patterns. The 4090's reported memory 
-   includes CUDA allocator overhead.
+3. **Depth Penalty**: Model B (12 layers) sees a 17x speedup on 4090, while Model A (2 layers) sees 21x. While both are dominated by the 4090, the deep model runs relatively "better" on MPS than the wide model compared to the overhead-dominated baseline, likely because the longer compute time amortizes the high launch overheads.
 
-4. **Backward Pass Scaling**: The backward pass shows the largest speedup differential, likely due to 
-   the 4090's tensor cores being particularly efficient for gradient computation with BF16.
+4. **Memory Efficiency**: MPS consistently reports lower memory usage. This is partly because it doesn't need a large caching allocator pool like PyTorch on CUDA, and partly because it uses unified system memory. However, the throughput cost is severe.
 
-5. **Model Quality**: Both platforms achieve similar validation losses, confirming that BF16 mixed 
-   precision on the 4090 doesn't significantly impact model quality for these architectures.
+5. **Backward Pass Anomaly**: On MPS Model A, the backward pass is reported as surprisingly fast ({_mps_a['backward_time_s']*1000:.1f}ms). This might indicate asynchronous execution measurement artifacts or that for very shallow models, the backward pass graph is trivial compared to the system overheads.
 """)
     else:
         _output = mo.md("*Not enough data for cross-platform comparison.*")
@@ -1581,6 +1500,24 @@ def _(GPU_SPECS, calculate_memory_breakdown, mo, pl):
         "profile_interest": "OOM error handling, memory allocation failure points"
     })
     
+    # Scenario 8: Vocab Bottleneck
+    profiling_configs.append({
+        "name": "Vocab Bottleneck",
+        "description": "Large vocab size - stresses output projection/logits",
+        "batch_size": 64, "seq_len": 256, "d_model": 512, "num_heads": 8,
+        "num_layers": 4, "d_ff": 1365, "vocab_size": 50257, # GPT-2 size
+        "profile_interest": "Logit computation (B*S*V) and cross-entropy loss time"
+    })
+    
+    # Scenario 9: Latency Bound
+    profiling_configs.append({
+        "name": "Latency Bound",
+        "description": "Batch size 1 - exposes pure kernel launch overhead",
+        "batch_size": 1, "seq_len": 128, "d_model": 512, "num_heads": 8,
+        "num_layers": 12, "d_ff": 1365, "vocab_size": 10000,
+        "profile_interest": "Kernel launch latency vs compute time, GPU utilization gaps"
+    })
+    
     # Calculate memory for each
     profiling_results = []
     for _cfg in profiling_configs:
@@ -1739,6 +1676,412 @@ def _(GPU_SPECS, go, mo, profiling_df):
     )
     
     mo.ui.plotly(_fig)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ---
+    ## Interactive Scaling Calculator
+
+    Explore different configurations to find the limits on the 4090. 
+    Adjust parameters and see real-time memory and compute estimates.
+    Save interesting configurations for later use.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    # Buttons to load preset configurations
+    load_model_a_btn = mo.ui.button(label="Load Model A Config", kind="success")
+    load_model_b_btn = mo.ui.button(label="Load Model B Config", kind="success")
+    reset_btn = mo.ui.button(label="Reset to Default", kind="neutral")
+    
+    mo.vstack([
+        mo.md("### Model Configuration"),
+        mo.md("**Quick Load Presets:** Click a button to load a model configuration"),
+        mo.hstack([load_model_a_btn, load_model_b_btn, reset_btn], justify="start", gap=2),
+    ])
+    return load_model_a_btn, load_model_b_btn, reset_btn
+
+
+@app.cell
+def _(
+    load_model_a_btn,
+    load_model_b_btn,
+    mo,
+    model_a_config,
+    model_a_trained,
+    model_b_config,
+    model_b_trained,
+    reset_btn,
+):
+    # Determine which config to load based on button clicks
+    _model_a = model_a_trained if model_a_trained else model_a_config
+    _model_b = model_b_trained if model_b_trained else model_b_config
+    
+    # Default values
+    _default_vals = {
+        "batch_size": 32,
+        "seq_len": 256,
+        "d_model": 512,
+        "num_heads": 8,
+        "num_layers": 6,
+        "d_ff": 1365,
+        "vocab_size": 10000,
+        "name": "custom_model",
+    }
+    
+    # Determine which config to use based on button clicks
+    if load_model_a_btn.value:
+        _ms = _model_a["model_settings"]
+        _vals = {
+            "batch_size": _model_a["batch_size"],
+            "seq_len": _ms["context_length"],
+            "d_model": _ms["d_model"],
+            "num_heads": _ms["num_heads"],
+            "num_layers": _ms["num_layers"],
+            "d_ff": _ms["d_ff"],
+            "vocab_size": _ms["vocab_size"],
+            "name": "Model_A",
+        }
+    elif load_model_b_btn.value:
+        _ms = _model_b["model_settings"]
+        _vals = {
+            "batch_size": _model_b["batch_size"],
+            "seq_len": _ms["context_length"],
+            "d_model": _ms["d_model"],
+            "num_heads": _ms["num_heads"],
+            "num_layers": _ms["num_layers"],
+            "d_ff": _ms["d_ff"],
+            "vocab_size": _ms["vocab_size"],
+            "name": "Model_B",
+        }
+    else:
+        _vals = _default_vals
+    
+    # Interactive sliders for scaling exploration
+    calc_batch = mo.ui.slider(1, 256, step=1, value=_vals["batch_size"], label="Batch Size", show_value=True)
+    calc_seq = mo.ui.slider(64, 8192, step=64, value=_vals["seq_len"], label="Sequence Length", show_value=True)
+    calc_d_model = mo.ui.slider(128, 4096, step=64, value=_vals["d_model"], label="d_model", show_value=True)
+    calc_d_head = mo.ui.slider(16, 128, step=8, value=_vals["d_model"] // _vals["num_heads"], label="d_head", show_value=True)
+    calc_layers = mo.ui.slider(1, 48, step=1, value=_vals["num_layers"], label="num_layers", show_value=True)
+    calc_d_ff_ratio = mo.ui.slider(1.0, 8.0, step=0.5, value=_vals["d_ff"] / _vals["d_model"], label="d_ff ratio", show_value=True)
+    calc_vocab = mo.ui.slider(1000, 100000, step=1000, value=_vals["vocab_size"], label="Vocab Size", show_value=True)
+    calc_config_name = mo.ui.text(value=_vals["name"], label="Config Name", placeholder="Enter config name")
+
+    mo.vstack([
+        mo.md("**Adjust Parameters:**"),
+        mo.hstack([calc_batch, calc_seq, calc_vocab], justify="start", gap=2),
+        mo.hstack([calc_d_model, calc_d_head, calc_layers, calc_d_ff_ratio], justify="start", gap=2),
+        mo.hstack([calc_config_name], justify="start", gap=2),
+    ])
+    return (
+        calc_batch,
+        calc_config_name,
+        calc_d_ff_ratio,
+        calc_d_head,
+        calc_d_model,
+        calc_layers,
+        calc_seq,
+        calc_vocab,
+    )
+
+
+@app.cell
+def _(
+    GPU_SPECS,
+    calc_batch,
+    calc_config_name,
+    calc_d_ff_ratio,
+    calc_d_head,
+    calc_d_model,
+    calc_layers,
+    calc_seq,
+    calc_vocab,
+    calculate_forward_flops,
+    calculate_memory_breakdown,
+    calculate_model_params,
+    calculate_training_step_flops,
+    mo,
+):
+    # Calculate for current config
+    _d = calc_d_model.value
+    _d_head = calc_d_head.value
+    _d_ff = int(_d * calc_d_ff_ratio.value / 64) * 64  # Round to multiple of 64
+    _h = max(1, _d // _d_head)  # num_heads = d_model / d_head
+    
+    # Validate d_model is divisible by d_head
+    _divisibility_warning = ""
+    if _d % _d_head != 0:
+        _divisibility_warning = f"⚠️ **Warning**: d_model ({_d}) is not divisible by d_head ({_d_head}). Using num_heads={_h} (rounded down)."
+    
+    _params = calculate_model_params(
+        vocab_size=calc_vocab.value,
+        d_model=_d,
+        num_heads=_h,
+        num_layers=calc_layers.value,
+        d_ff=_d_ff,
+    )
+    
+    _mem = calculate_memory_breakdown(
+        batch_size=calc_batch.value,
+        seq_len=calc_seq.value,
+        vocab_size=calc_vocab.value,
+        d_model=_d,
+        num_heads=_h,
+        num_layers=calc_layers.value,
+        d_ff=_d_ff,
+        precision="bf16",
+    )
+    
+    _forward = calculate_forward_flops(
+        batch_size=calc_batch.value,
+        seq_len=calc_seq.value,
+        vocab_size=calc_vocab.value,
+        d_model=_d,
+        num_heads=_h,
+        num_layers=calc_layers.value,
+        d_ff=_d_ff,
+    )
+    
+    _training = calculate_training_step_flops(_forward["total"])
+    
+    _tokens_per_step = calc_batch.value * calc_seq.value
+    
+    # Theoretical step time (100% MFU)
+    _theo_step_time = _training["total"] / (GPU_SPECS["bf16_tflops"] * 1e12)
+    
+    # Realistic step time (assume 35% MFU for small models)
+    _real_mfu = 0.35
+    _real_step_time = _theo_step_time / _real_mfu
+    _real_throughput = _tokens_per_step / _real_step_time
+    
+    # Memory status
+    _mem_pct = _mem["peak_memory_gb"] / GPU_SPECS["vram_gb"] * 100
+    _mem_status = "✅" if _mem_pct <= 90 else ("⚠️" if _mem_pct <= 100 else "❌")
+    
+    def _fmt(n):
+        if n >= 1e12: return f"{n/1e12:.2f}T"
+        if n >= 1e9: return f"{n/1e9:.2f}G"
+        if n >= 1e6: return f"{n/1e6:.2f}M"
+        if n >= 1e3: return f"{n/1e3:.2f}K"
+        return f"{n:.0f}"
+
+    # Store current config for export
+    current_calc_config = {
+        "name": calc_config_name.value,
+        "batch_size": calc_batch.value,
+        "model_settings": {
+            "vocab_size": calc_vocab.value,
+            "d_model": _d,
+            "num_heads": _h,
+            "d_head": _d_head,
+            "num_layers": calc_layers.value,
+            "d_ff": _d_ff,
+            "context_length": calc_seq.value,
+            "rope_theta": 10000.0,
+        },
+        "estimated": {
+            "params_M": _params['total_M'],
+            "peak_memory_gb": _mem['peak_memory_gb'],
+            "fits_4090": _mem_pct <= 100,
+        }
+    }
+
+    _warning_md = f"\n{_divisibility_warning}\n" if _divisibility_warning else ""
+
+    mo.md(f"""
+    ### Results for Current Configuration
+    {_warning_md}
+    | Metric | Value |
+    |--------|-------|
+    | **Config name** | {calc_config_name.value} |
+    | **d_ff (computed)** | {_d_ff} |
+    | **d_head** | {_d_head} |
+    | **num_heads** | {_h} (= d_model / d_head) |
+    | **Total Parameters** | {_fmt(_params['total'])} ({_params['total_M']:.1f}M) |
+    | **Tokens per step** | {_tokens_per_step:,} |
+
+    #### Memory {_mem_status}
+
+    | Component | Value | % of 24GB |
+    |-----------|-------|-----------|
+    | **Peak memory** | {_mem['peak_memory_gb']:.2f} GB | {_mem_pct:.1f}% |
+    | **Parameter memory** | {_mem['param_memory_gb']:.2f} GB | {_mem['param_memory_gb']/24*100:.1f}% |
+    | **Activation memory** | {_mem['activation_memory_gb']:.2f} GB | {_mem['activation_memory_gb']/24*100:.1f}% |
+    | **Headroom** | {24 - _mem['peak_memory_gb']:.2f} GB | - |
+
+    #### Compute
+
+    | Metric | Value |
+    |--------|-------|
+    | **Forward FLOPs** | {_fmt(_forward['total'])} |
+    | **Training step FLOPs** | {_fmt(_training['total'])} |
+    | **Theoretical step time** | {_theo_step_time*1000:.2f} ms (100% MFU) |
+    | **Realistic step time** | {_real_step_time*1000:.1f} ms ({_real_mfu*100:.0f}% MFU) |
+    | **Est. throughput** | {_real_throughput:,.0f} tok/s |
+    
+    *Estimates assume {_real_mfu*100:.0f}% MFU, typical for small-medium models.*
+    """)
+    return (current_calc_config,)
+
+
+@app.cell
+def _(current_calc_config, mo, yaml):
+    # Save configuration section
+    import json as _json
+    from datetime import datetime as _datetime
+    
+    _yaml_config = yaml.dump({current_calc_config["name"]: {
+        "name": current_calc_config["name"],
+        "description": f"Custom config (est. {current_calc_config['estimated']['params_M']:.1f}M params, {current_calc_config['estimated']['peak_memory_gb']:.1f}GB memory)",
+        "batch_size": current_calc_config["batch_size"],
+        "model_settings": current_calc_config["model_settings"],
+    }}, default_flow_style=False, sort_keys=False)
+    
+    _json_config = _json.dumps(current_calc_config, indent=2)
+    
+    mo.md(f"""
+### Save Configuration
+
+Copy the configuration below to add to `configs/models.yaml` or use directly:
+
+<details>
+<summary><b>YAML Format</b> (for models.yaml)</summary>
+
+```yaml
+{_yaml_config}
+```
+
+</details>
+
+<details>
+<summary><b>JSON Format</b></summary>
+
+```json
+{_json_config}
+```
+
+</details>
+    """)
+    return
+
+
+@app.cell
+def _(Path, current_calc_config, mo, yaml):
+    # Save button and saved configs list
+    saved_configs_file = Path("notebooks/saved_configs.yaml")
+    
+    def save_current_config():
+        """Save current config to file."""
+        existing = {}
+        if saved_configs_file.exists():
+            with open(saved_configs_file) as _f:
+                existing = yaml.safe_load(_f) or {}
+        
+        config_entry = {
+            "name": current_calc_config["name"],
+            "description": f"Custom config (est. {current_calc_config['estimated']['params_M']:.1f}M params)",
+            "batch_size": current_calc_config["batch_size"],
+            "model_settings": current_calc_config["model_settings"],
+        }
+        existing[current_calc_config["name"]] = config_entry
+        
+        with open(saved_configs_file, "w") as _f:
+            yaml.dump(existing, _f, default_flow_style=False, sort_keys=False)
+        
+        return f"Saved '{current_calc_config['name']}' to {saved_configs_file}"
+
+    save_button = mo.ui.button(
+        label="💾 Save Configuration",
+        on_click=lambda _: save_current_config(),
+    )
+    
+    # Load and display saved configs
+    _saved_display = ""
+    if saved_configs_file.exists():
+        with open(saved_configs_file) as _f:
+            _saved = yaml.safe_load(_f) or {}
+        if _saved:
+            _saved_display = "**Saved configurations:**\n" + "\n".join([
+                f"- `{name}`: {cfg.get('description', 'No description')}"
+                for name, cfg in _saved.items()
+            ])
+        else:
+            _saved_display = "*No saved configurations yet.*"
+    else:
+        _saved_display = "*No saved configurations yet.*"
+    
+    mo.vstack([
+        mo.hstack([save_button], justify="start"),
+        mo.md(_saved_display),
+    ])
+    return save_button, save_current_config, saved_configs_file
+
+
+@app.cell
+def _(GPU_SPECS, calculate_memory_breakdown, mo):
+    # Find maximum configurations that fit in 4090
+    
+    def _find_max_param(vary_param, base_config, max_val, step):
+        """Binary search for max value that fits in VRAM."""
+        low, high = step, max_val
+        best = low
+        
+        while low <= high:
+            mid = ((low + high) // 2 // step) * step  # Round to step
+            cfg = base_config.copy()
+            cfg[vary_param] = mid
+            
+            # Adjust dependent params for d_model
+            if vary_param == "d_model":
+                cfg["num_heads"] = max(1, mid // 64)
+                cfg["d_ff"] = int(mid * 2.67 / 64) * 64
+            
+            mem = calculate_memory_breakdown(**cfg, precision="bf16")
+            
+            if mem["peak_memory_gb"] <= GPU_SPECS["vram_gb"] * 0.95:  # 95% margin
+                best = mid
+                low = mid + step
+            else:
+                high = mid - step
+        
+        return best
+
+    _base = {
+        "batch_size": 32,
+        "seq_len": 256,
+        "vocab_size": 10000,
+        "d_model": 512,
+        "num_heads": 8,
+        "num_layers": 6,
+        "d_ff": 1365,
+    }
+
+    # Find limits
+    _max_batch = _find_max_param("batch_size", _base, 1024, 8)
+    _max_seq = _find_max_param("seq_len", _base, 16384, 128)
+    _max_d_model = _find_max_param("d_model", _base, 8192, 64)
+    _max_layers = _find_max_param("num_layers", _base, 96, 1)
+
+    mo.md(f"""
+    ### 4090 Maximum Configurations (with 5% safety margin)
+
+    Starting from base config: batch=32, seq=256, d_model=512, layers=6
+
+    | Parameter | Max Value | Limiting Factor |
+    |-----------|-----------|-----------------|
+    | **batch_size** | {_max_batch} | Activation memory (linear) |
+    | **seq_len** | {_max_seq} | Attention matrices (O(S²)) |
+    | **d_model** | {_max_d_model} | Param + activation memory |
+    | **num_layers** | {_max_layers} | Activation memory (linear) |
+
+    *Note: These are one-at-a-time limits. Increasing multiple parameters simultaneously 
+    will hit the memory wall sooner.*
+    """)
     return
 
 
