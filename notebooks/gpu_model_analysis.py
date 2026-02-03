@@ -1517,6 +1517,24 @@ def _(GPU_SPECS, calculate_memory_breakdown, mo, pl):
         "num_layers": 12, "d_ff": 1365, "vocab_size": 10000,
         "profile_interest": "Kernel launch latency vs compute time, GPU utilization gaps"
     })
+
+    # Scenario 10: Misaligned / Odd Dimensions
+    profiling_configs.append({
+        "name": "Misaligned Dims",
+        "description": "Odd d_model and batch size - worst case for alignment",
+        "batch_size": 33, "seq_len": 256, "d_model": 513, "num_heads": 9,
+        "num_layers": 6, "d_ff": 1369, "vocab_size": 10007,
+        "profile_interest": "Memory coalescing failures, padding overhead, warp misalignment"
+    })
+
+    # Scenario 11: Bad Head Size
+    profiling_configs.append({
+        "name": "Bad Head Size",
+        "description": "Head dim=70 (not 64/128) - inefficient for Flash/kernels",
+        "batch_size": 32, "seq_len": 256, "d_model": 700, "num_heads": 10,
+        "num_layers": 6, "d_ff": 2048, "vocab_size": 10000,
+        "profile_interest": "Attention kernel efficiency drop (standard kernels optimize for power-of-2)"
+    })
     
     # Calculate memory for each
     profiling_results = []
@@ -1693,35 +1711,14 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
-    # Buttons to load preset configurations
-    load_model_a_btn = mo.ui.button(label="Load Model A Config", kind="success")
-    load_model_b_btn = mo.ui.button(label="Load Model B Config", kind="success")
-    reset_btn = mo.ui.button(label="Reset to Default", kind="neutral")
-    
-    mo.vstack([
-        mo.md("### Model Configuration"),
-        mo.md("**Quick Load Presets:** Click a button to load a model configuration"),
-        mo.hstack([load_model_a_btn, load_model_b_btn, reset_btn], justify="start", gap=2),
-    ])
-    return load_model_a_btn, load_model_b_btn, reset_btn
-
-
-@app.cell
 def _(
-    load_model_a_btn,
-    load_model_b_btn,
     mo,
     model_a_config,
     model_a_trained,
     model_b_config,
     model_b_trained,
-    reset_btn,
+    profiling_configs,
 ):
-    # Determine which config to load based on button clicks
-    _model_a = model_a_trained if model_a_trained else model_a_config
-    _model_b = model_b_trained if model_b_trained else model_b_config
-    
     # Default values
     _default_vals = {
         "batch_size": 32,
@@ -1734,33 +1731,84 @@ def _(
         "name": "custom_model",
     }
     
-    # Determine which config to use based on button clicks
-    if load_model_a_btn.value:
-        _ms = _model_a["model_settings"]
-        _vals = {
-            "batch_size": _model_a["batch_size"],
-            "seq_len": _ms["context_length"],
-            "d_model": _ms["d_model"],
-            "num_heads": _ms["num_heads"],
-            "num_layers": _ms["num_layers"],
-            "d_ff": _ms["d_ff"],
-            "vocab_size": _ms["vocab_size"],
-            "name": "Model_A",
+    get_config_state, set_config_state = mo.state(_default_vals)
+    
+    # Prepare dropdown options
+    _options = {}
+    
+    # Add Model A and B
+    _model_a = model_a_trained if model_a_trained else model_a_config
+    _ms_a = _model_a["model_settings"]
+    _options["Model A (Wide & Shallow)"] = {
+        "batch_size": _model_a["batch_size"],
+        "seq_len": _ms_a["context_length"],
+        "d_model": _ms_a["d_model"],
+        "num_heads": _ms_a["num_heads"],
+        "num_layers": _ms_a["num_layers"],
+        "d_ff": _ms_a["d_ff"],
+        "vocab_size": _ms_a["vocab_size"],
+        "name": "Model_A",
+    }
+    
+    _model_b = model_b_trained if model_b_trained else model_b_config
+    _ms_b = _model_b["model_settings"]
+    _options["Model B (Narrow & Deep)"] = {
+        "batch_size": _model_b["batch_size"],
+        "seq_len": _ms_b["context_length"],
+        "d_model": _ms_b["d_model"],
+        "num_heads": _ms_b["num_heads"],
+        "num_layers": _ms_b["num_layers"],
+        "d_ff": _ms_b["d_ff"],
+        "vocab_size": _ms_b["vocab_size"],
+        "name": "Model_B",
+    }
+    
+    # Add profiling scenarios
+    for cfg in profiling_configs:
+        if cfg["name"] in ["Model A (baseline)", "Model B (baseline)"]:
+            continue
+        _options[f"Scenario: {cfg['name']}"] = {
+            "batch_size": cfg["batch_size"],
+            "seq_len": cfg["seq_len"],
+            "d_model": cfg["d_model"],
+            "num_heads": cfg["num_heads"],
+            "num_layers": cfg["num_layers"],
+            "d_ff": cfg["d_ff"],
+            "vocab_size": cfg["vocab_size"],
+            "name": cfg["name"].replace(" ", "_"),
         }
-    elif load_model_b_btn.value:
-        _ms = _model_b["model_settings"]
-        _vals = {
-            "batch_size": _model_b["batch_size"],
-            "seq_len": _ms["context_length"],
-            "d_model": _ms["d_model"],
-            "num_heads": _ms["num_heads"],
-            "num_layers": _ms["num_layers"],
-            "d_ff": _ms["d_ff"],
-            "vocab_size": _ms["vocab_size"],
-            "name": "Model_B",
-        }
-    else:
-        _vals = _default_vals
+
+    def _on_change(value):
+        if value:
+            set_config_state(_options[value])
+
+    config_dropdown = mo.ui.dropdown(
+        options=list(_options.keys()),
+        label="Load Configuration Preset",
+        on_change=_on_change
+    )
+    
+    reset_btn = mo.ui.button(
+        label="Reset to Default", 
+        kind="neutral",
+        on_click=lambda _: set_config_state(_default_vals)
+    )
+    
+    mo.vstack([
+        mo.md("### Model Configuration"),
+        mo.hstack([config_dropdown, reset_btn], justify="start", gap=2),
+    ])
+    return (
+        config_dropdown,
+        get_config_state,
+        reset_btn,
+        set_config_state,
+    )
+
+
+@app.cell
+def _(get_config_state, mo):
+    _vals = get_config_state()
     
     # Interactive sliders for scaling exploration
     calc_batch = mo.ui.slider(1, 256, step=1, value=_vals["batch_size"], label="Batch Size", show_value=True)
@@ -1893,39 +1941,53 @@ def _(
 
     _warning_md = f"\n{_divisibility_warning}\n" if _divisibility_warning else ""
 
-    mo.md(f"""
+    _results_md = f"""
     ### Results for Current Configuration
     {_warning_md}
+    """
+
+    _config_table = f"""
+    #### Model Config
     | Metric | Value |
     |--------|-------|
     | **Config name** | {calc_config_name.value} |
-    | **d_ff (computed)** | {_d_ff} |
+    | **d_ff** | {_d_ff} |
     | **d_head** | {_d_head} |
-    | **num_heads** | {_h} (= d_model / d_head) |
-    | **Total Parameters** | {_fmt(_params['total'])} ({_params['total_M']:.1f}M) |
-    | **Tokens per step** | {_tokens_per_step:,} |
+    | **num_heads** | {_h} |
+    | **Params** | {_params['total_M']:.1f}M |
+    | **Tok/step** | {_tokens_per_step:,} |
+    """
 
+    _memory_table = f"""
     #### Memory {_mem_status}
+    | Component | Value | % 24GB |
+    |-----------|-------|--------|
+    | **Peak** | {_mem['peak_memory_gb']:.1f} GB | {_mem_pct:.0f}% |
+    | **Param** | {_mem['param_memory_gb']:.1f} GB | {_mem['param_memory_gb']/24*100:.0f}% |
+    | **Activ** | {_mem['activation_memory_gb']:.1f} GB | {_mem['activation_memory_gb']/24*100:.0f}% |
+    | **Free** | {24 - _mem['peak_memory_gb']:.1f} GB | - |
+    """
 
-    | Component | Value | % of 24GB |
-    |-----------|-------|-----------|
-    | **Peak memory** | {_mem['peak_memory_gb']:.2f} GB | {_mem_pct:.1f}% |
-    | **Parameter memory** | {_mem['param_memory_gb']:.2f} GB | {_mem['param_memory_gb']/24*100:.1f}% |
-    | **Activation memory** | {_mem['activation_memory_gb']:.2f} GB | {_mem['activation_memory_gb']/24*100:.1f}% |
-    | **Headroom** | {24 - _mem['peak_memory_gb']:.2f} GB | - |
-
-    #### Compute
-
+    _compute_table = f"""
+    #### Compute (Est.)
     | Metric | Value |
     |--------|-------|
-    | **Forward FLOPs** | {_fmt(_forward['total'])} |
-    | **Training step FLOPs** | {_fmt(_training['total'])} |
-    | **Theoretical step time** | {_theo_step_time*1000:.2f} ms (100% MFU) |
-    | **Realistic step time** | {_real_step_time*1000:.1f} ms ({_real_mfu*100:.0f}% MFU) |
-    | **Est. throughput** | {_real_throughput:,.0f} tok/s |
+    | **Fwd FLOPs** | {_fmt(_forward['total'])} |
+    | **Step FLOPs** | {_fmt(_training['total'])} |
+    | **Theo Time** | {_theo_step_time*1000:.1f} ms |
+    | **Real Time** | {_real_step_time*1000:.0f} ms |
+    | **Tput** | {_real_throughput:,.0f} |
+    """
+
+    mo.vstack([
+        mo.md(_results_md),
+        mo.hstack([
+            mo.md(_config_table),
+            mo.md(_memory_table),
+            mo.md(_compute_table)
+        ], gap=2, align="start")
+    ])
     
-    *Estimates assume {_real_mfu*100:.0f}% MFU, typical for small-medium models.*
-    """)
     return (current_calc_config,)
 
 
