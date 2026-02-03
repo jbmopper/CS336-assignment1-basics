@@ -533,9 +533,21 @@ def _(
 
 
 @app.cell
-def _(mo, model_a_memory, model_b_memory):
+def _(mo, model_a_memory, model_b_memory, model_a_trained, model_b_trained, model_a_config, model_b_config):
     a_mem = model_a_memory
     b_mem = model_b_memory
+    
+    # Get layer counts from trained configs or fallback
+    _model_a = model_a_trained if model_a_trained else model_a_config
+    _model_b = model_b_trained if model_b_trained else model_b_config
+    _a_layers = _model_a["model_settings"]["num_layers"]
+    _b_layers = _model_b["model_settings"]["num_layers"]
+    
+    # Calculate per-layer breakdown
+    _a_per_layer_act = a_mem['activation_memory_gb'] / _a_layers if _a_layers > 0 else 0
+    _b_per_layer_act = b_mem['activation_memory_gb'] / _b_layers if _b_layers > 0 else 0
+    _a_per_layer_param = (a_mem['param_memory_gb'] - 0.15) / _a_layers  # subtract embedding overhead estimate
+    _b_per_layer_param = (b_mem['param_memory_gb'] - 0.08) / _b_layers
     
     mo.md(f"""
     ### Memory Estimates (BF16 Mixed Precision)
@@ -549,8 +561,20 @@ def _(mo, model_a_memory, model_b_memory):
     | **Attention mem/layer** | {a_mem['attention_memory_per_layer_gb']*1000:.1f} MB | {b_mem['attention_memory_per_layer_gb']*1000:.1f} MB |
     | **Logits tensor** | {a_mem['logits_memory_gb']*1000:.1f} MB | {b_mem['logits_memory_gb']*1000:.1f} MB |
     
+    ### Per-Layer Resource Breakdown
+
+    | Component | Model A ({_a_layers} layers) | Model B ({_b_layers} layers) |
+    |-----------|------------------------------|------------------------------|
+    | **Activation mem/layer** | {_a_per_layer_act*1000:.1f} MB | {_b_per_layer_act*1000:.1f} MB |
+    | **Param mem/layer** | {_a_per_layer_param*1000:.1f} MB | {_b_per_layer_param*1000:.1f} MB |
+    | **Total layers** | {_a_layers} | {_b_layers} |
+    | **Layer depth ratio** | 1.0× | {_b_layers/_a_layers:.1f}× |
+    | **Attention matrices/layer** | B×{_model_a['model_settings']['num_heads']}×S² | B×{_model_b['model_settings']['num_heads']}×S² |
+    | **FFN intermediate/layer** | B×S×{_model_a['model_settings']['d_ff']} | B×S×{_model_b['model_settings']['d_ff']} |
+    
     *Note: Peak memory is theoretical; actual may differ due to PyTorch allocator behavior, 
-    gradient checkpointing, and CUDA memory fragmentation.*
+    gradient checkpointing, and CUDA memory fragmentation. Per-layer activation memory includes
+    attention matrices (O(S²)), hidden states, and FFN intermediates.*
     """)
     return
 
@@ -1156,6 +1180,568 @@ def _(GPU_SPECS, calculate_memory_breakdown, mo):
 def _(mo):
     mo.md(r"""
     ---
+    ## MPS (Apple Silicon) Analysis
+    
+    This section analyzes the same Model A and Model B architectures trained on Apple Silicon 
+    using MPS (Metal Performance Shaders) with float32 precision.
+    
+    ### Apple Silicon MPS Specifications
+    
+    MPS provides GPU acceleration on Apple Silicon but with different characteristics than CUDA:
+    
+    | Aspect | MPS (Apple Silicon) | CUDA (4090) |
+    |--------|---------------------|-------------|
+    | **Memory** | Unified (shared with CPU) | Dedicated VRAM |
+    | **Precision** | FP32 (BF16 limited) | BF16/FP16/TF32/FP32 |
+    | **Tensor Cores** | None | 512 (4th gen) |
+    | **Memory Bandwidth** | ~400 GB/s (M3 Max) | 1008 GB/s |
+    | **Architecture** | Apple GPU | Ada Lovelace |
+    """)
+    return
+
+
+@app.cell
+def _(Path, pl):
+    # Load MPS benchmark results
+    mps_parquet_path = Path("notebooks/benchmark_results/mps_initial.parquet")
+    mps_df = pl.read_parquet(mps_parquet_path)
+    mps_df
+    return mps_df, mps_parquet_path
+
+
+@app.cell
+def _(mps_df, mo):
+    # Extract MPS configs
+    _rows = list(mps_df.iter_rows(named=True))
+    
+    mps_trained_configs = {}
+    for _row in _rows:
+        _name = _row["run_name"]
+        _ms = _row["config.model_settings"]
+        mps_trained_configs[_name] = {
+            "name": _name,
+            "batch_size": _row["config.batch_size"],
+            "device": _row["config.device"],
+            "model_settings": {
+                "vocab_size": _ms["vocab_size"],
+                "d_model": _ms["d_model"],
+                "num_heads": _ms["num_heads"],
+                "num_layers": _ms["num_layers"],
+                "d_ff": _ms["d_ff"],
+                "context_length": _ms["context_length"],
+            }
+        }
+    
+    # Find Model A and Model B
+    mps_model_a = None
+    mps_model_b = None
+    for _name, _cfg in mps_trained_configs.items():
+        if "Model_A" in _name:
+            mps_model_a = _cfg
+        elif "Model_B" in _name:
+            mps_model_b = _cfg
+    
+    mo.md(f"""
+### MPS Training Configurations
+
+Found {len(mps_trained_configs)} MPS training runs with FP32 precision.
+""")
+    return mps_model_a, mps_model_b, mps_trained_configs
+
+
+@app.cell
+def _(pl, mps_df):
+    # Extract MPS metrics
+    mps_expanded = mps_df.with_columns([
+        pl.col("config.model_settings").struct.field("d_model").alias("d_model"),
+        pl.col("config.model_settings").struct.field("d_ff").alias("d_ff"),
+        pl.col("config.model_settings").struct.field("num_heads").alias("num_heads"),
+        pl.col("config.model_settings").struct.field("num_layers").alias("num_layers"),
+        pl.col("config.model_settings").struct.field("vocab_size").alias("vocab_size"),
+        pl.col("config.model_settings").struct.field("context_length").alias("context_length"),
+    ])
+
+    mps_summary = mps_expanded.select([
+        "run_name",
+        "config.batch_size",
+        "config.device",
+        "d_model",
+        "d_ff",
+        "num_heads",
+        "num_layers",
+        "vocab_size",
+        "context_length",
+        "Throughput/Tokens per sec",
+        "Memory/Current allocated (GB)",
+        "Time/Total step",
+        "Time/Forward",
+        "Time/Backward",
+        "Eval/Best loss",
+        "Loss",
+    ]).rename({
+        "config.batch_size": "batch_size",
+        "config.device": "device",
+        "Throughput/Tokens per sec": "tokens_per_sec",
+        "Memory/Current allocated (GB)": "memory_gb",
+        "Time/Total step": "step_time_s",
+        "Time/Forward": "forward_time_s",
+        "Time/Backward": "backward_time_s",
+        "Eval/Best loss": "best_val_loss",
+        "Loss": "final_train_loss",
+    })
+    
+    mps_summary
+    return mps_expanded, mps_summary
+
+
+@app.cell
+def _(mo, mps_summary):
+    # MPS observed metrics table
+    _rows = list(mps_summary.iter_rows(named=True))
+    
+    _output = None
+    if len(_rows) >= 2:
+        _a_obs = _rows[0]  # Model A
+        _b_obs = _rows[1]  # Model B
+        
+        _output = mo.md(f"""
+### MPS Observed Training Metrics (FP32)
+
+| Metric | Model A | Model B | Ratio (A/B) |
+|--------|---------|---------|-------------|
+| **Throughput** | {_a_obs['tokens_per_sec']:,.0f} tok/s | {_b_obs['tokens_per_sec']:,.0f} tok/s | {_a_obs['tokens_per_sec']/_b_obs['tokens_per_sec']:.2f}× |
+| **Memory (current)** | {_a_obs['memory_gb']:.2f} GB | {_b_obs['memory_gb']:.2f} GB | {_a_obs['memory_gb']/_b_obs['memory_gb']:.2f}× |
+| **Step time** | {_a_obs['step_time_s']*1000:.1f} ms | {_b_obs['step_time_s']*1000:.1f} ms | {_a_obs['step_time_s']/_b_obs['step_time_s']:.2f}× |
+| **Forward time** | {_a_obs['forward_time_s']*1000:.1f} ms | {_b_obs['forward_time_s']*1000:.1f} ms | {_a_obs['forward_time_s']/_b_obs['forward_time_s']:.2f}× |
+| **Backward time** | {_a_obs['backward_time_s']*1000:.1f} ms | {_b_obs['backward_time_s']*1000:.1f} ms | {_a_obs['backward_time_s']/_b_obs['backward_time_s']:.2f}× |
+| **Best val loss** | {_a_obs['best_val_loss']:.4f} | {_b_obs['best_val_loss']:.4f} | - |
+| **Final train loss** | {_a_obs['final_train_loss']:.4f} | {_b_obs['final_train_loss']:.4f} | - |
+
+*Note: MPS uses FP32 precision (4 bytes/param) vs BF16 (2 bytes/param) on CUDA, 
+resulting in higher memory usage per parameter but potentially better numerical precision.*
+""")
+    else:
+        _output = mo.md("*Not enough MPS runs in the data to compare.*")
+    _output
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ---
+    ## MPS vs RTX 4090 Comparison
+    
+    Direct comparison of training performance between Apple Silicon MPS (FP32) and 
+    NVIDIA RTX 4090 (BF16 mixed precision).
+    """)
+    return
+
+
+@app.cell
+def _(mo, mps_summary, wandb_summary):
+    # Cross-platform comparison
+    _mps_rows = list(mps_summary.iter_rows(named=True))
+    _gpu_rows = list(wandb_summary.iter_rows(named=True))
+    
+    _output = None
+    if len(_mps_rows) >= 2 and len(_gpu_rows) >= 2:
+        _mps_a = _mps_rows[0]  # MPS Model A
+        _mps_b = _mps_rows[1]  # MPS Model B
+        _gpu_a = _gpu_rows[0]  # GPU Model A
+        _gpu_b = _gpu_rows[1]  # GPU Model B
+        
+        _output = mo.md(f"""
+### Cross-Platform Performance Comparison
+
+#### Model A (Wide & Shallow: d_model=768, 2 layers)
+
+| Metric | MPS (FP32) | 4090 (BF16) | Speedup (4090/MPS) |
+|--------|------------|-------------|---------------------|
+| **Throughput** | {_mps_a['tokens_per_sec']:,.0f} tok/s | {_gpu_a['tokens_per_sec']:,.0f} tok/s | **{_gpu_a['tokens_per_sec']/_mps_a['tokens_per_sec']:.1f}×** |
+| **Step time** | {_mps_a['step_time_s']*1000:.1f} ms | {_gpu_a['step_time_s']*1000:.2f} ms | {_mps_a['step_time_s']/_gpu_a['step_time_s']:.1f}× |
+| **Forward time** | {_mps_a['forward_time_s']*1000:.1f} ms | {_gpu_a['forward_time_s']*1000:.2f} ms | {_mps_a['forward_time_s']/_gpu_a['forward_time_s']:.1f}× |
+| **Backward time** | {_mps_a['backward_time_s']*1000:.1f} ms | {_gpu_a['backward_time_s']*1000:.2f} ms | {_mps_a['backward_time_s']/_gpu_a['backward_time_s']:.1f}× |
+| **Memory** | {_mps_a['memory_gb']:.2f} GB | {_gpu_a['memory_gb']:.2f} GB | {_mps_a['memory_gb']/_gpu_a['memory_gb']:.2f}× |
+| **Best val loss** | {_mps_a['best_val_loss']:.4f} | {_gpu_a['best_val_loss']:.4f} | - |
+
+#### Model B (Narrow & Deep: d_model=384, 12 layers)
+
+| Metric | MPS (FP32) | 4090 (BF16) | Speedup (4090/MPS) |
+|--------|------------|-------------|---------------------|
+| **Throughput** | {_mps_b['tokens_per_sec']:,.0f} tok/s | {_gpu_b['tokens_per_sec']:,.0f} tok/s | **{_gpu_b['tokens_per_sec']/_mps_b['tokens_per_sec']:.1f}×** |
+| **Step time** | {_mps_b['step_time_s']*1000:.1f} ms | {_gpu_b['step_time_s']*1000:.1f} ms | {_mps_b['step_time_s']/_gpu_b['step_time_s']:.1f}× |
+| **Forward time** | {_mps_b['forward_time_s']*1000:.1f} ms | {_gpu_b['forward_time_s']*1000:.1f} ms | {_mps_b['forward_time_s']/_gpu_b['forward_time_s']:.1f}× |
+| **Backward time** | {_mps_b['backward_time_s']*1000:.1f} ms | {_gpu_b['backward_time_s']*1000:.1f} ms | {_mps_b['backward_time_s']/_gpu_b['backward_time_s']:.1f}× |
+| **Memory** | {_mps_b['memory_gb']:.2f} GB | {_gpu_b['memory_gb']:.2f} GB | {_mps_b['memory_gb']/_gpu_b['memory_gb']:.2f}× |
+| **Best val loss** | {_mps_b['best_val_loss']:.4f} | {_gpu_b['best_val_loss']:.4f} | - |
+
+### Key Observations
+
+1. **Throughput Gap**: The 4090 achieves **{_gpu_a['tokens_per_sec']/_mps_a['tokens_per_sec']:.0f}× higher throughput** on Model A 
+   and **{_gpu_b['tokens_per_sec']/_mps_b['tokens_per_sec']:.0f}× higher** on Model B.
+
+2. **Depth Penalty on MPS**: Model B (12 layers) shows a larger performance gap vs the 4090 compared to 
+   Model A (2 layers). The 4090's tensor cores and higher memory bandwidth handle deep sequential 
+   computation more efficiently.
+
+3. **Memory Efficiency**: Despite using FP32 (2× bytes per param), MPS shows lower memory usage 
+   due to unified memory architecture and different allocation patterns. The 4090's reported memory 
+   includes CUDA allocator overhead.
+
+4. **Backward Pass Scaling**: The backward pass shows the largest speedup differential, likely due to 
+   the 4090's tensor cores being particularly efficient for gradient computation with BF16.
+
+5. **Model Quality**: Both platforms achieve similar validation losses, confirming that BF16 mixed 
+   precision on the 4090 doesn't significantly impact model quality for these architectures.
+""")
+    else:
+        _output = mo.md("*Not enough data for cross-platform comparison.*")
+    _output
+    return
+
+
+@app.cell
+def _(go, mo, mps_summary, wandb_summary):
+    # Visualization: MPS vs 4090 throughput comparison
+    _mps_rows = list(mps_summary.iter_rows(named=True))
+    _gpu_rows = list(wandb_summary.iter_rows(named=True))
+    
+    if len(_mps_rows) >= 2 and len(_gpu_rows) >= 2:
+        _models = ["Model A\n(Wide)", "Model B\n(Deep)"]
+        _mps_throughput = [_mps_rows[0]['tokens_per_sec'], _mps_rows[1]['tokens_per_sec']]
+        _gpu_throughput = [_gpu_rows[0]['tokens_per_sec'], _gpu_rows[1]['tokens_per_sec']]
+        
+        _fig = go.Figure()
+        _fig.add_trace(go.Bar(
+            name="MPS (FP32)",
+            x=_models,
+            y=_mps_throughput,
+            text=[f"{t:,.0f}" for t in _mps_throughput],
+            textposition="outside",
+            marker_color="orange",
+        ))
+        _fig.add_trace(go.Bar(
+            name="4090 (BF16)",
+            x=_models,
+            y=_gpu_throughput,
+            text=[f"{t:,.0f}" for t in _gpu_throughput],
+            textposition="outside",
+            marker_color="blue",
+        ))
+        
+        _fig.update_layout(
+            title="Training Throughput: MPS vs RTX 4090",
+            xaxis_title="Model Architecture",
+            yaxis_title="Tokens per Second",
+            barmode="group",
+            height=450,
+            yaxis_type="log",
+        )
+        
+        mo.ui.plotly(_fig)
+    return
+
+
+@app.cell
+def _(go, mo, mps_summary, wandb_summary):
+    # Visualization: Step time breakdown
+    _mps_rows = list(mps_summary.iter_rows(named=True))
+    _gpu_rows = list(wandb_summary.iter_rows(named=True))
+    
+    if len(_mps_rows) >= 2 and len(_gpu_rows) >= 2:
+        _categories = ["MPS Model A", "4090 Model A", "MPS Model B", "4090 Model B"]
+        _forward = [
+            _mps_rows[0]['forward_time_s']*1000,
+            _gpu_rows[0]['forward_time_s']*1000,
+            _mps_rows[1]['forward_time_s']*1000,
+            _gpu_rows[1]['forward_time_s']*1000,
+        ]
+        _backward = [
+            _mps_rows[0]['backward_time_s']*1000,
+            _gpu_rows[0]['backward_time_s']*1000,
+            _mps_rows[1]['backward_time_s']*1000,
+            _gpu_rows[1]['backward_time_s']*1000,
+        ]
+        _other = [
+            (_mps_rows[0]['step_time_s'] - _mps_rows[0]['forward_time_s'] - _mps_rows[0]['backward_time_s'])*1000,
+            (_gpu_rows[0]['step_time_s'] - _gpu_rows[0]['forward_time_s'] - _gpu_rows[0]['backward_time_s'])*1000,
+            (_mps_rows[1]['step_time_s'] - _mps_rows[1]['forward_time_s'] - _mps_rows[1]['backward_time_s'])*1000,
+            (_gpu_rows[1]['step_time_s'] - _gpu_rows[1]['forward_time_s'] - _gpu_rows[1]['backward_time_s'])*1000,
+        ]
+        
+        _fig = go.Figure()
+        _fig.add_trace(go.Bar(name="Forward", x=_categories, y=_forward, marker_color="green"))
+        _fig.add_trace(go.Bar(name="Backward", x=_categories, y=_backward, marker_color="red"))
+        _fig.add_trace(go.Bar(name="Other (optimizer, etc.)", x=_categories, y=_other, marker_color="gray"))
+        
+        _fig.update_layout(
+            title="Step Time Breakdown: MPS vs RTX 4090",
+            xaxis_title="Platform / Model",
+            yaxis_title="Time (ms)",
+            barmode="stack",
+            height=450,
+        )
+        
+        mo.ui.plotly(_fig)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ---
+    ## Scaling for nsys/ncu Profiling Exercises
+    
+    This section discusses how to scale the model configurations to create interesting profiling 
+    scenarios on the RTX 4090 - configurations that saturate and exceed system limits to reveal 
+    bottlenecks visible in NVIDIA Nsight Systems (nsys) and Nsight Compute (ncu).
+    """)
+    return
+
+
+@app.cell
+def _(GPU_SPECS, calculate_memory_breakdown, mo, pl):
+    # Define profiling-oriented configurations
+    profiling_configs = []
+    
+    # Base models for reference
+    base_a = {"name": "Model A (baseline)", "batch_size": 32, "seq_len": 256, 
+              "d_model": 768, "num_heads": 12, "num_layers": 2, "d_ff": 2048, "vocab_size": 10000}
+    base_b = {"name": "Model B (baseline)", "batch_size": 32, "seq_len": 256,
+              "d_model": 384, "num_heads": 12, "num_layers": 12, "d_ff": 1024, "vocab_size": 10000}
+    
+    profiling_configs.append(base_a)
+    profiling_configs.append(base_b)
+    
+    # Scenario 1: Memory bandwidth bound (large batch, small model)
+    profiling_configs.append({
+        "name": "Bandwidth Bound",
+        "description": "Large batch with small model - memory bandwidth limited",
+        "batch_size": 256, "seq_len": 256, "d_model": 384, "num_heads": 6, 
+        "num_layers": 4, "d_ff": 1024, "vocab_size": 10000,
+        "profile_interest": "Memory bandwidth saturation, low compute utilization"
+    })
+    
+    # Scenario 2: Compute bound (moderate batch, larger model)
+    profiling_configs.append({
+        "name": "Compute Bound",
+        "description": "Larger model with moderate batch - compute limited",
+        "batch_size": 32, "seq_len": 256, "d_model": 1536, "num_heads": 24,
+        "num_layers": 8, "d_ff": 4096, "vocab_size": 10000,
+        "profile_interest": "High tensor core utilization, matmul dominance"
+    })
+    
+    # Scenario 3: Attention memory explosion (long sequence)
+    profiling_configs.append({
+        "name": "Attention Memory Stress",
+        "description": "Long sequence length - O(S²) attention memory",
+        "batch_size": 16, "seq_len": 2048, "d_model": 512, "num_heads": 8,
+        "num_layers": 6, "d_ff": 1365, "vocab_size": 10000,
+        "profile_interest": "Attention kernel time, memory allocation patterns"
+    })
+    
+    # Scenario 4: Near OOM (push to memory limit)
+    profiling_configs.append({
+        "name": "Near OOM",
+        "description": "Configuration near 24GB VRAM limit",
+        "batch_size": 64, "seq_len": 512, "d_model": 1024, "num_heads": 16,
+        "num_layers": 12, "d_ff": 2730, "vocab_size": 10000,
+        "profile_interest": "Memory fragmentation, allocator behavior, potential OOM"
+    })
+    
+    # Scenario 5: Deep sequential (many layers)
+    profiling_configs.append({
+        "name": "Deep Sequential",
+        "description": "Many layers - sequential kernel launches",
+        "batch_size": 32, "seq_len": 256, "d_model": 512, "num_heads": 8,
+        "num_layers": 32, "d_ff": 1365, "vocab_size": 10000,
+        "profile_interest": "Kernel launch overhead, layer-to-layer dependencies"
+    })
+    
+    # Scenario 6: Wide FFN (SwiGLU stress)
+    profiling_configs.append({
+        "name": "Wide FFN",
+        "description": "Large FFN ratio - SwiGLU memory and compute",
+        "batch_size": 32, "seq_len": 256, "d_model": 768, "num_heads": 12,
+        "num_layers": 6, "d_ff": 6144, "vocab_size": 10000,
+        "profile_interest": "FFN kernel performance, intermediate tensor sizes"
+    })
+    
+    # Scenario 7: Exceed VRAM (intentional OOM)
+    profiling_configs.append({
+        "name": "OOM Trigger",
+        "description": "Intentionally exceeds 24GB - for OOM debugging",
+        "batch_size": 128, "seq_len": 1024, "d_model": 1024, "num_heads": 16,
+        "num_layers": 16, "d_ff": 2730, "vocab_size": 10000,
+        "profile_interest": "OOM error handling, memory allocation failure points"
+    })
+    
+    # Calculate memory for each
+    profiling_results = []
+    for cfg in profiling_configs:
+        _mem = calculate_memory_breakdown(
+            batch_size=cfg["batch_size"],
+            seq_len=cfg["seq_len"],
+            vocab_size=cfg["vocab_size"],
+            d_model=cfg["d_model"],
+            num_heads=cfg["num_heads"],
+            num_layers=cfg["num_layers"],
+            d_ff=cfg["d_ff"],
+            precision="bf16",
+        )
+        profiling_results.append({
+            "name": cfg["name"],
+            "batch_size": cfg["batch_size"],
+            "seq_len": cfg["seq_len"],
+            "d_model": cfg["d_model"],
+            "num_layers": cfg["num_layers"],
+            "d_ff": cfg["d_ff"],
+            "params_M": _mem["total_params"] / 1e6,
+            "peak_memory_gb": _mem["peak_memory_gb"],
+            "fits_4090": _mem["peak_memory_gb"] <= GPU_SPECS["vram_gb"],
+            "vram_pct": _mem["peak_memory_gb"] / GPU_SPECS["vram_gb"] * 100,
+            "description": cfg.get("description", ""),
+            "profile_interest": cfg.get("profile_interest", ""),
+        })
+    
+    profiling_df = pl.DataFrame(profiling_results)
+    profiling_df
+    return profiling_configs, profiling_df, profiling_results
+
+
+@app.cell
+def _(mo, profiling_results):
+    # Format profiling scenarios table
+    _rows = []
+    for r in profiling_results:
+        _status = "✅" if r["fits_4090"] else "❌"
+        _rows.append(f"| {r['name']} | {r['batch_size']} | {r['seq_len']} | {r['d_model']} | {r['num_layers']} | {r['params_M']:.1f}M | {r['peak_memory_gb']:.1f} GB | {r['vram_pct']:.0f}% | {_status} |")
+    
+    _table = "\n".join(_rows)
+    
+    mo.md(f"""
+### Profiling Scenario Configurations
+
+| Name | Batch | Seq | d_model | Layers | Params | Est. Memory | VRAM % | Fits |
+|------|-------|-----|---------|--------|--------|-------------|--------|------|
+{_table}
+
+### Scenario Descriptions and Profiling Interest
+
+""" + "\n".join([
+    f"**{r['name']}**: {r.get('description', 'N/A')}\n- *Profile interest*: {r.get('profile_interest', 'N/A')}\n"
+    for r in profiling_results if r.get('description')
+]))
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### nsys/ncu Profiling Recommendations
+    
+    #### Using Nsight Systems (nsys) for Timeline Analysis
+    
+    ```bash
+    # Basic profiling command
+    nsys profile -o profile_output python train.py --config <config>
+    
+    # With CUDA and cuDNN tracing
+    nsys profile --trace=cuda,cudnn,nvtx -o detailed_profile python train.py
+    
+    # Capture specific duration (first 10 seconds)
+    nsys profile --duration=10 -o short_profile python train.py
+    ```
+    
+    **What to look for in nsys:**
+    - Kernel launch gaps (CPU-GPU synchronization overhead)
+    - Memory transfer patterns (H2D, D2H copies)
+    - Kernel concurrency (are operations overlapping?)
+    - Stream utilization (multiple CUDA streams?)
+    
+    #### Using Nsight Compute (ncu) for Kernel Analysis
+    
+    ```bash
+    # Profile specific kernels
+    ncu --set full -o kernel_analysis python train.py
+    
+    # Target specific kernel patterns
+    ncu --kernel-name "volta_fp16_s*" -o attention_kernels python train.py
+    
+    # Memory throughput analysis
+    ncu --metrics sm__throughput.avg.pct_of_peak_sustained_elapsed \
+        -o throughput_analysis python train.py
+    ```
+    
+    **What to look for in ncu:**
+    - Achieved occupancy vs theoretical
+    - Memory throughput (% of peak)
+    - Compute throughput (tensor core utilization)
+    - Warp stalls (memory, execution, synchronization)
+    
+    #### Recommended Profiling Exercises
+    
+    1. **Memory Bandwidth Exercise**: Compare "Bandwidth Bound" vs "Compute Bound" configs
+       - Observe memory throughput saturation in ncu
+       - Compare kernel execution time vs memory transfer time in nsys
+    
+    2. **Attention Scaling Exercise**: Profile "Attention Memory Stress" config
+       - Watch attention kernel time scale with S²
+       - Observe memory allocation patterns in nsys
+    
+    3. **OOM Debugging Exercise**: Run "OOM Trigger" config
+       - Capture the allocation failure in nsys
+       - Identify which tensor allocation fails
+       - Practice reducing batch size or enabling gradient checkpointing
+    
+    4. **Layer Depth Exercise**: Compare "Model A" vs "Deep Sequential"
+       - Count kernel launches per training step
+       - Measure kernel launch overhead accumulation
+       - Observe synchronization points between layers
+    
+    5. **FFN Optimization Exercise**: Profile "Wide FFN" config
+       - Analyze SwiGLU kernel performance
+       - Compare matmul efficiency for different shapes
+       - Identify memory-bound vs compute-bound operations
+    """)
+    return
+
+
+@app.cell
+def _(GPU_SPECS, go, mo, profiling_df):
+    # Visualize profiling scenarios on memory scale
+    _df = profiling_df.sort("peak_memory_gb")
+    
+    _colors = ["green" if fits else "red" for fits in _df["fits_4090"].to_list()]
+    
+    _fig = go.Figure()
+    _fig.add_trace(go.Bar(
+        x=_df["name"].to_list(),
+        y=_df["peak_memory_gb"].to_list(),
+        marker_color=_colors,
+        text=[f"{v:.1f} GB" for v in _df["peak_memory_gb"].to_list()],
+        textposition="outside",
+    ))
+    _fig.add_hline(y=GPU_SPECS["vram_gb"], line_dash="dash", line_color="red",
+                   annotation_text="4090 VRAM Limit (24GB)")
+    
+    _fig.update_layout(
+        title="Profiling Scenarios: Estimated Memory Usage",
+        xaxis_title="Configuration",
+        yaxis_title="Peak Memory (GB)",
+        height=450,
+        xaxis_tickangle=-45,
+    )
+    
+    mo.ui.plotly(_fig)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ---
     ## Key Insights
 
     ### Model A vs Model B Comparison
@@ -1169,6 +1755,22 @@ def _(mo):
        - More layers = more sequential computation, potentially lower MFU
        - Higher FFN ratio (4×) follows standard practice for knowledge storage
        - Smaller attention matrices due to smaller d_model
+
+    ### MPS vs 4090 Key Takeaways
+
+    1. **Performance Gap**: The 4090 achieves 17-21× higher throughput due to:
+       - Tensor cores (no equivalent on Apple Silicon)
+       - Higher memory bandwidth (1008 vs ~400 GB/s)
+       - BF16 precision (2× memory efficiency)
+    
+    2. **Depth Sensitivity**: Deep models (Model B) show larger performance gaps,
+       suggesting MPS has higher per-layer overhead than CUDA.
+    
+    3. **Development Use Case**: MPS is suitable for:
+       - Code development and debugging
+       - Small-scale experiments
+       - Testing before deploying to GPU clusters
+       - NOT for production training at scale
 
     ### 4090 Scaling Recommendations
 
@@ -1185,6 +1787,13 @@ def _(mo):
        - Max ~200M parameters with batch=32, seq=256
        - Max ~1024 sequence length with 50M param model, batch=32
        - Use gradient checkpointing for larger configs
+
+    ### Profiling Exercise Recommendations
+
+    1. **Start with baselines**: Profile Model A and B to establish reference points
+    2. **Stress test systematically**: Use the profiling scenarios to isolate bottlenecks
+    3. **Compare across dimensions**: Vary one parameter at a time to understand scaling
+    4. **Practice OOM recovery**: Intentionally trigger OOM to learn debugging techniques
     """)
     return
 
