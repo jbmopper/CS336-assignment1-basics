@@ -764,33 +764,33 @@ def _(GPU_SPECS, calculate_memory_breakdown, mo, pl):
 
     # Vary d_model (width)
     for d in [256, 384, 512, 768, 1024, 1536, 2048]:
-        cfg = base.copy()
-        cfg["d_model"] = d
-        cfg["num_heads"] = d // 64  # keep d_head=64
-        cfg["d_ff"] = int(d * 8 / 3 / 64) * 64  # SwiGLU ratio, rounded
-        cfg["vary"] = "d_model"
-        scaling_configs.append(cfg)
+        _cfg = base.copy()
+        _cfg["d_model"] = d
+        _cfg["num_heads"] = d // 64  # keep d_head=64
+        _cfg["d_ff"] = int(d * 8 / 3 / 64) * 64  # SwiGLU ratio, rounded
+        _cfg["vary"] = "d_model"
+        scaling_configs.append(_cfg)
 
     # Vary num_layers (depth)
     for L in [2, 4, 6, 8, 12, 16, 24, 32]:
-        cfg = base.copy()
-        cfg["num_layers"] = L
-        cfg["vary"] = "num_layers"
-        scaling_configs.append(cfg)
+        _cfg = base.copy()
+        _cfg["num_layers"] = L
+        _cfg["vary"] = "num_layers"
+        scaling_configs.append(_cfg)
 
     # Vary batch_size
     for B in [8, 16, 32, 64, 128, 256, 512]:
-        cfg = base.copy()
-        cfg["batch_size"] = B
-        cfg["vary"] = "batch_size"
-        scaling_configs.append(cfg)
+        _cfg = base.copy()
+        _cfg["batch_size"] = B
+        _cfg["vary"] = "batch_size"
+        scaling_configs.append(_cfg)
 
     # Vary seq_len (context length)
     for S in [128, 256, 512, 1024, 2048, 4096]:
-        cfg = base.copy()
-        cfg["seq_len"] = S
-        cfg["vary"] = "seq_len"
-        scaling_configs.append(cfg)
+        _cfg = base.copy()
+        _cfg["seq_len"] = S
+        _cfg["vary"] = "seq_len"
+        scaling_configs.append(_cfg)
 
     # Calculate memory for each config
     scaling_results = []
@@ -1407,6 +1407,7 @@ def _(go, mo, mps_summary, wandb_summary):
     _mps_rows = list(mps_summary.iter_rows(named=True))
     _gpu_rows = list(wandb_summary.iter_rows(named=True))
     
+    _output = None
     if len(_mps_rows) >= 2 and len(_gpu_rows) >= 2:
         _models = ["Model A\n(Wide)", "Model B\n(Deep)"]
         _mps_throughput = [_mps_rows[0]['tokens_per_sec'], _mps_rows[1]['tokens_per_sec']]
@@ -1439,7 +1440,8 @@ def _(go, mo, mps_summary, wandb_summary):
             yaxis_type="log",
         )
         
-        mo.ui.plotly(_fig)
+        _output = mo.ui.plotly(_fig)
+    _output
     return
 
 
@@ -1449,6 +1451,7 @@ def _(go, mo, mps_summary, wandb_summary):
     _mps_rows = list(mps_summary.iter_rows(named=True))
     _gpu_rows = list(wandb_summary.iter_rows(named=True))
     
+    _output = None
     if len(_mps_rows) >= 2 and len(_gpu_rows) >= 2:
         _categories = ["MPS Model A", "4090 Model A", "MPS Model B", "4090 Model B"]
         _forward = [
@@ -1483,7 +1486,8 @@ def _(go, mo, mps_summary, wandb_summary):
             height=450,
         )
         
-        mo.ui.plotly(_fig)
+        _output = mo.ui.plotly(_fig)
+    _output
     return
 
 
@@ -1579,30 +1583,30 @@ def _(GPU_SPECS, calculate_memory_breakdown, mo, pl):
     
     # Calculate memory for each
     profiling_results = []
-    for cfg in profiling_configs:
+    for _cfg in profiling_configs:
         _mem = calculate_memory_breakdown(
-            batch_size=cfg["batch_size"],
-            seq_len=cfg["seq_len"],
-            vocab_size=cfg["vocab_size"],
-            d_model=cfg["d_model"],
-            num_heads=cfg["num_heads"],
-            num_layers=cfg["num_layers"],
-            d_ff=cfg["d_ff"],
+            batch_size=_cfg["batch_size"],
+            seq_len=_cfg["seq_len"],
+            vocab_size=_cfg["vocab_size"],
+            d_model=_cfg["d_model"],
+            num_heads=_cfg["num_heads"],
+            num_layers=_cfg["num_layers"],
+            d_ff=_cfg["d_ff"],
             precision="bf16",
         )
         profiling_results.append({
-            "name": cfg["name"],
-            "batch_size": cfg["batch_size"],
-            "seq_len": cfg["seq_len"],
-            "d_model": cfg["d_model"],
-            "num_layers": cfg["num_layers"],
-            "d_ff": cfg["d_ff"],
+            "name": _cfg["name"],
+            "batch_size": _cfg["batch_size"],
+            "seq_len": _cfg["seq_len"],
+            "d_model": _cfg["d_model"],
+            "num_layers": _cfg["num_layers"],
+            "d_ff": _cfg["d_ff"],
             "params_M": _mem["total_params"] / 1e6,
             "peak_memory_gb": _mem["peak_memory_gb"],
             "fits_4090": _mem["peak_memory_gb"] <= GPU_SPECS["vram_gb"],
             "vram_pct": _mem["peak_memory_gb"] / GPU_SPECS["vram_gb"] * 100,
-            "description": cfg.get("description", ""),
-            "profile_interest": cfg.get("profile_interest", ""),
+            "description": _cfg.get("description", ""),
+            "profile_interest": _cfg.get("profile_interest", ""),
         })
     
     profiling_df = pl.DataFrame(profiling_results)
