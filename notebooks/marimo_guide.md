@@ -170,6 +170,34 @@ def _(x):
     return (x_doubled,)
 ```
 
+**How to avoid duplicate-definition errors**
+
+- Only return variables you intend to share across cells.
+- If a cell is display-only, do **not** return anything.
+- Reuse variable names **inside** a cell is fine, but returning the same name
+  from multiple cells is not.
+- If you need a temporary value for display, keep it local and don't return it.
+- Rename returned variables when you need multiple versions.
+
+```python
+# BAD: both cells return `display`
+@app.cell
+def _():
+    display = mo.md("A")
+    return (display,)
+
+@app.cell
+def _():
+    display = mo.md("B")
+    return (display,)  # Error: duplicate definition
+
+# GOOD: display-only cell (no return)
+@app.cell
+def _():
+    display = mo.md("B")
+    display
+```
+
 ### Rule 5: Cells without returns are valid (display-only)
 
 If a cell just displays output and defines nothing, omit the return.
@@ -638,6 +666,15 @@ def _(data, mo):
 def _(data):
     print(f"Debug: {data}")  # Goes to terminal, not visible in notebook
     mo.output.append(f"Debug: {data}")  # Visible in notebook
+```
+
+### Run `marimo check`
+
+Use `marimo check` to validate notebooks for errors like duplicate definitions,
+cycles, and syntax issues. Assistants should run this after edits.
+
+```bash
+marimo check notebooks/wandb_parquet_explorer.py
 ```
 
 ## Quick reference: Return syntax
