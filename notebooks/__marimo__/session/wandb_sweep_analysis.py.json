@@ -1,0 +1,158 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.19.6"
+  },
+  "cells": [
+    {
+      "id": "MJUe",
+      "code_hash": "da66192e8f3981142f2f48a76970ae3d",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"wb-sweep-analysis\">W&amp;B Sweep Analysis</h1>\n<span class=\"paragraph\">Load sweep runs into a dataframe, save to CSV, and explore results.</span>\n<span class=\"paragraph\"><strong>Notes</strong></span>\n<ul>\n<li>You can load runs locally from the <code>wandb/</code> directory without any API access.</li>\n<li>To use the W&amp;B API, uncheck \"Use local wandb/ directory\" and set the sweep path.</li>\n<li>The sweep path looks like: <code>entity/project/sweep_id</code>.</li>\n</ul></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Hbol",
+      "code_hash": "1fa33a203a2106e2547ecbb189d49d97",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "a3c25d0e6e4f49b96319d5747b33b3fc",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<div style='display: flex;flex: 1;flex-direction: column;justify-content: flex-start;align-items: normal;flex-wrap: nowrap;gap: 2rem'><marimo-ui-element object-id='vblA-0' random-id='a3ff1d5f-4dea-9d09-3f6e-60e6fe53d530'><marimo-text data-initial-value='&quot;jbmopper-0/assignment1-basics-cs336_basics&quot;' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Sweep path (entity/project/sweep_id) or Project path (entity/project)&lt;/span&gt;&lt;/span&gt;&quot;' data-placeholder='&quot;e.g. jbmopper-0/assignment1-basics-cs336_basics/abc123&quot;' data-kind='&quot;text&quot;' data-full-width='false' data-disabled='false' data-debounce='true'></marimo-text></marimo-ui-element><div style='display: flex;flex: 1;flex-direction: row;justify-content: flex-start;align-items: normal;flex-wrap: nowrap;gap: 2rem'><marimo-ui-element object-id='vblA-1' random-id='bd5ac6f6-566a-c806-8a22-fd34a34593d5'><marimo-checkbox data-initial-value='false' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Use local wandb/ directory&lt;/span&gt;&lt;/span&gt;&quot;' data-disabled='false'></marimo-checkbox></marimo-ui-element><marimo-ui-element object-id='vblA-2' random-id='17777e6b-d843-6851-bc2c-9deb6135ef61'><marimo-text data-initial-value='&quot;wandb&quot;' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Local wandb directory&lt;/span&gt;&lt;/span&gt;&quot;' data-placeholder='&quot;&quot;' data-kind='&quot;text&quot;' data-full-width='false' data-disabled='false' data-debounce='true'></marimo-text></marimo-ui-element></div><div style='display: flex;flex: 1;flex-direction: row;justify-content: flex-start;align-items: normal;flex-wrap: nowrap;gap: 2rem'><marimo-ui-element object-id='vblA-3' random-id='65f1d70c-687c-9ccf-1d98-bb2cc0c3fe78'><marimo-text data-initial-value='&quot;Eval Loss&quot;' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Metric key&lt;/span&gt;&lt;/span&gt;&quot;' data-placeholder='&quot;&quot;' data-kind='&quot;text&quot;' data-full-width='false' data-disabled='false' data-debounce='true'></marimo-text></marimo-ui-element><marimo-ui-element object-id='vblA-4' random-id='fbf58eba-a1ea-2bc9-9e7c-ce9a557c56bb'><marimo-text data-initial-value='&quot;notebooks/sweep_runs.csv&quot;' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;CSV output path&lt;/span&gt;&lt;/span&gt;&quot;' data-placeholder='&quot;&quot;' data-kind='&quot;text&quot;' data-full-width='false' data-disabled='false' data-debounce='true'></marimo-text></marimo-ui-element></div><div style='display: flex;flex: 1;flex-direction: row;justify-content: flex-start;align-items: normal;flex-wrap: nowrap;gap: 2rem'><marimo-ui-element object-id='vblA-5' random-id='61539980-c263-8777-5503-945a8d2b17ee'><marimo-slider data-initial-value='200' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Max runs to load&lt;/span&gt;&lt;/span&gt;&quot;' data-start='1' data-stop='500' data-step='1' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><marimo-ui-element object-id='vblA-6' random-id='71d2daec-d06b-8e1d-2892-1761cb782c54'><marimo-checkbox data-initial-value='true' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Log-scale LR axis&lt;/span&gt;&lt;/span&gt;&quot;' data-disabled='false'></marimo-checkbox></marimo-ui-element><marimo-ui-element object-id='vblA-7' random-id='f264a97d-f3ad-d647-0b68-33aa835569ca'><marimo-checkbox data-initial-value='false' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Load per-run history&lt;/span&gt;&lt;/span&gt;&quot;' data-disabled='false'></marimo-checkbox></marimo-ui-element></div></div>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "7c76ebc89f4925b80d0d8a722ff92162",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stderr",
+          "text": "wandb: [wandb.Api()] Loaded credentials for https://api.wandb.ai from /Users/juliusmopper/.netrc.\n",
+          "mimetype": "text/plain"
+        }
+      ]
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "f79718b056b7bf9cd4bf480cdac46791",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "PKri",
+      "code_hash": "1b3a8825beb39f657c6eed0946da6a8f",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "bb4a97643e41d1ed5537e566bf157620",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "09e6d5df667d43876f97fbe32aae0511",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "f714684923e1658e56df1aef0b53a80f",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "dbfb078d01b1b7b51cab0305af60a874",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "0f5320d907b52546d2f94f39a50f41b2",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    }
+  ]
+}
