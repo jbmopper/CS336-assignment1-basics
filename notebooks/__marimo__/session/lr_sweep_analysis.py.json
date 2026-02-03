@@ -1,0 +1,178 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.19.6"
+  },
+  "cells": [
+    {
+      "id": "MJUe",
+      "code_hash": "a97f4c671abc1d4ea9bc481fb855f72e",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"learning-rate-sweep-analysis\">Learning Rate Sweep Analysis</h1>\n<span class=\"paragraph\">This notebook analyzes learning rate sweeps to identify the highest stable learning rate and evaluate the Bayesian optimizer's behavior.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "cad2d5f38e70629e25bea58da0761291",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"raw-data-explorer\">Raw Data Explorer</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Hbol",
+      "code_hash": "f977ca49733097bddef868294176c938",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "bafa604179a5d45a595a80e667f6a8bc",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stderr",
+          "text": "wandb: [wandb.Api()] Loaded credentials for https://api.wandb.ai from /Users/juliusmopper/.netrc.\n",
+          "mimetype": "text/plain"
+        }
+      ]
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "f3121be5000c639ab7a00686ec0392be",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "0d67f95345d270ba1fbf19c6ea41282f",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "PKri",
+      "code_hash": "a4c942431384d5757e0a7b28d5588443",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<div style='display: flex;flex: 1;flex-direction: column;justify-content: flex-start;align-items: normal;flex-wrap: nowrap;gap: 0.5rem'><marimo-ui-element object-id='PKri-0' random-id='07f3dd70-18f3-784f-2fc6-784536c1b82f'><marimo-radio data-initial-value='&quot;Specific Sweeps&quot;' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Fetch Mode&lt;/span&gt;&lt;/span&gt;&quot;' data-options='[&quot;Specific Sweeps&quot;,&quot;All Project Runs&quot;]' data-inline='false' data-disabled='false'></marimo-radio></marimo-ui-element><marimo-ui-element object-id='PKri-1' random-id='c030eb20-4069-8cdb-503b-d586ee6d8277'><marimo-text data-initial-value='&quot;itfiwcnz, suxigz6c, mlmgd0yc, i3cipjc7&quot;' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Sweep IDs (if Specific Sweeps)&lt;/span&gt;&lt;/span&gt;&quot;' data-placeholder='&quot;e.g. itfiwcnz, suxigz6c&quot;' data-kind='&quot;text&quot;' data-full-width='false' data-disabled='false' data-debounce='true'></marimo-text></marimo-ui-element><div style='display: flex;flex: 1;flex-direction: row;justify-content: space-between;align-items: normal;flex-wrap: nowrap;gap: 0.5rem'><marimo-ui-element object-id='PKri-2' random-id='ab54fe9b-1c57-43a3-a4df-049319358b5f'><marimo-text data-initial-value='&quot;mbvr0dru&quot;' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;First Good Run ID (runs before this are ignored)&lt;/span&gt;&lt;/span&gt;&quot;' data-placeholder='&quot;e.g. mbvr0dru&quot;' data-kind='&quot;text&quot;' data-full-width='false' data-disabled='false' data-debounce='true'></marimo-text></marimo-ui-element><marimo-ui-element object-id='PKri-3' random-id='fea91be1-19bc-ad01-7e8d-78196a959f4d'><marimo-text data-initial-value='&quot;49kgf0iv&quot;' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Ignored Run IDs (comma separated)&lt;/span&gt;&lt;/span&gt;&quot;' data-placeholder='&quot;e.g. 49kgf0iv&quot;' data-kind='&quot;text&quot;' data-full-width='false' data-disabled='false' data-debounce='true'></marimo-text></marimo-ui-element></div><marimo-ui-element object-id='PKri-4' random-id='aa28330b-2044-e19e-7652-09f57f34716d'><marimo-number data-initial-value='1000' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Max runs to fetch&lt;/span&gt;&lt;/span&gt;&quot;' data-start='1' data-stop='5000' data-step='100' data-debounce='false' data-full-width='false' data-disabled='false'></marimo-number></marimo-ui-element></div>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "2cdb085ddd065d8dd6c466f805ec9302",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "exception",
+          "evalue": "`total` is required when using as a context manager",
+          "traceback": []
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stderr",
+          "text": "<span class=\"codehilite\"><div class=\"highlight\"><pre><span></span><span class=\"gt\">Traceback (most recent call last):</span>\n  File <span class=\"nb\">&quot;/var/folders/b1/03jb7zms37z_brp02glfrnch0000gn/T/marimo_61356/__marimo__cell_Xref_.py&quot;</span>, line <span class=\"m\">5</span>, in <span class=\"n\">&lt;module&gt;</span>\n<span class=\"w\">    </span><span class=\"k\">with</span> <span class=\"n\">mo</span><span class=\"o\">.</span><span class=\"n\">status</span><span class=\"o\">.</span><span class=\"n\">progress_bar</span><span class=\"p\">(</span><span class=\"n\">title</span><span class=\"o\">=</span><span class=\"s2\">&quot;Fetching Run Data&quot;</span><span class=\"p\">)</span> <span class=\"k\">as</span> <span class=\"n\">bar</span><span class=\"p\">:</span>\n<span class=\"w\">         </span><span class=\"pm\">~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^</span>\n  File <span class=\"nb\">&quot;/Users/juliusmopper/Dev/stanford-cs336/assignment1-basics/.venv/lib/python3.13/site-packages/marimo/_plugins/stateless/status/_progress.py&quot;</span>, line <span class=\"m\">408</span>, in <span class=\"n\">__init__</span>\n<span class=\"w\">    </span><span class=\"k\">raise</span> <span class=\"ne\">ValueError</span><span class=\"p\">(</span>\n<span class=\"w\">    </span>    <span class=\"s2\">&quot;`total` is required when using as a context manager&quot;</span>\n<span class=\"w\">    </span><span class=\"p\">)</span>\n<span class=\"gr\">ValueError</span>: <span class=\"n\">`total` is required when using as a context manager</span>\n</pre></div>\n</span>",
+          "mimetype": "application/vnd.marimo+traceback"
+        }
+      ]
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "c0355a8863650e69c894d7f312d3c38e",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "exception",
+          "evalue": "An ancestor raised an exception (ValueError): ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "32753455c4bf60aeb2951af62dfc9543",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "exception",
+          "evalue": "An ancestor raised an exception (ValueError): ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "261ad044462281f14f81153b7adbc108",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "exception",
+          "evalue": "An ancestor raised an exception (ValueError): ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "emfo",
+      "code_hash": "6cb06eb402184114a18b77598f467c2d",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "exception",
+          "evalue": "An ancestor raised an exception (ValueError): ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    }
+  ]
+}
