@@ -87,20 +87,20 @@ MODEL_PRESETS = {
 }
 
 
-def get_trainer_config(model_config: dict, device: str, precision: str, checkpoint_dir: str) -> dict:
+def get_trainer_config(model_config: dict, device: str, precision: str, checkpoint_dir: str, num_iters: int = 1000) -> dict:
     """Create a trainer config for profiling (no W&B)."""
     return {
         "model_settings": model_config["model_settings"],
         "device": device,
         "precision": precision,
         "batch_size": model_config["batch_size"],
-        "num_iters": 1000,
+        "num_iters": num_iters,
         "eval_every": 999999,
         "gradient_clip": 1.0,
         "scheduler_lr_max": 1e-3,
         "scheduler_lr_min": 1e-4,
         "scheduler_warmup_iters": 100,
-        "scheduler_cos_iters": 1000,
+        "scheduler_cos_iters": num_iters,
         "checkpoint_dir": checkpoint_dir,
         "checkpoint_add_timestamp": False,
     }
@@ -290,6 +290,14 @@ def main():
         type=int,
         help="Override batch size",
     )
+    # Custom model overrides
+    parser.add_argument("--d-model", type=int, help="Override d_model")
+    parser.add_argument("--num-layers", type=int, help="Override num_layers")
+    parser.add_argument("--num-heads", type=int, help="Override num_heads")
+    parser.add_argument("--d-ff", type=int, help="Override d_ff")
+    parser.add_argument("--vocab-size", type=int, help="Override vocab_size")
+    parser.add_argument("--seq-len", type=int, help="Override context_length")
+
     args = parser.parse_args()
     
     # Check CUDA
@@ -303,17 +311,26 @@ def main():
     print(f"GPU: {torch.cuda.get_device_name()}")
     print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
     print(f"Precision: {args.precision}")
-    print(f"Model: {args.model}")
+    print(f"Model Preset: {args.model}")
     
     # Load model config
     model_config = MODEL_PRESETS[args.model].copy()
     model_config["model_settings"] = model_config["model_settings"].copy()
     
+    # Apply overrides
     if args.batch_size:
         model_config["batch_size"] = args.batch_size
     
+    ms = model_config["model_settings"]
+    if args.d_model: ms["d_model"] = args.d_model
+    if args.num_layers: ms["num_layers"] = args.num_layers
+    if args.num_heads: ms["num_heads"] = args.num_heads
+    if args.d_ff: ms["d_ff"] = args.d_ff
+    if args.vocab_size: ms["vocab_size"] = args.vocab_size
+    if args.seq_len: ms["context_length"] = args.seq_len
+    
     print(f"Batch size: {model_config['batch_size']}")
-    print(f"Description: {model_config['description']}")
+    print(f"Config: d_model={ms['d_model']}, layers={ms['num_layers']}, heads={ms['num_heads']}, ctx={ms['context_length']}")
     
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
@@ -330,6 +347,7 @@ def main():
         device="cuda",
         precision=args.precision,
         checkpoint_dir=checkpoint_dir,
+        num_iters=args.steps + args.warmup + 10,  # Ensure schedule covers profile duration
     )
     
     trainer = Trainer(TransformerLM, trainer_config, tokens, valid_tokens)
