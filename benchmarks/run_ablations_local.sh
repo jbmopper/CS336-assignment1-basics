@@ -26,7 +26,7 @@ else
     echo "No CUDA GPU detected - using fp32 precision (MPS compatible)"
 fi
 
-COMMON_ARGS="--data-dir ${DATA_DIR} --precision ${PRECISION} --num-iters 5000 --eval-every 500 --save-every 5000"
+COMMON_ARGS="--data-dir ${DATA_DIR} --precision ${PRECISION} --num-iters 5000 --eval-every 500"
 
 echo "Starting local ablations on GPU $GPU_ID..."
 echo "Common args: $COMMON_ARGS"
@@ -58,9 +58,9 @@ run_exp "wide" \
 run_exp "deep" \
     --d-model 384 --num-layers 8 --num-heads 12 --d-ff 1024 --batch-size 64
 
-# 4. Large Vocab (Test vocab impact)
-run_exp "large_vocab" \
-    --d-model 512 --num-layers 4 --num-heads 16 --d-ff 1344 --vocab-size 50000 --batch-size 64
+# 4. Wider FFN (Test FFN scaling)
+run_exp "wide_ffn" \
+    --d-model 512 --num-layers 4 --num-heads 16 --d-ff 2048 --batch-size 64
 
 echo ""
 echo "All ablations complete!"
