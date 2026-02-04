@@ -137,6 +137,9 @@ Run architecture ablations (wide vs deep models, FFN scaling, etc.) with automat
 # Or with default S3 bucket
 ./runpod/prep_run_ablations.sh
 
+# Custom W&B project
+WANDB_PROJECT="cs336-ablations" ./runpod/prep_run_ablations.sh
+
 # Manual run (after data setup)
 export DATA_DIR=/workspace/tokenized
 export CHECKPOINT_DIR=/workspace/checkpoints/ablations

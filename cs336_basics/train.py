@@ -139,6 +139,9 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, help="Override batch size")
     parser.add_argument("--num-iters", type=int, help="Override number of iterations")
     parser.add_argument("--lr", type=float, help="Override learning rate (scheduler max)")
+    parser.add_argument("--lr-min", type=float, help="Override minimum learning rate")
+    parser.add_argument("--warmup-iters", type=int, help="Override warmup iterations")
+    parser.add_argument("--cosine-iters", type=int, help="Override cosine decay iterations")
     parser.add_argument("--context-length", type=int, help="Override context length")
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     
@@ -163,6 +166,16 @@ def parse_args():
         "--no-wandb",
         action="store_true",
         help="Disable W&B logging",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        help="W&B project name (default: cs336-a1)",
+    )
+    parser.add_argument(
+        "--wandb-entity",
+        type=str,
+        help="W&B entity/username (default: jbmopper-0)",
     )
     parser.add_argument(
         "--run-name",
@@ -212,6 +225,12 @@ def build_config(args):
     if args.lr is not None:
         config["scheduler_lr_max"] = args.lr
         config["optimizer_lr"] = args.lr
+    if args.lr_min is not None:
+        config["scheduler_lr_min"] = args.lr_min
+    if args.warmup_iters is not None:
+        config["scheduler_warmup_iters"] = args.warmup_iters
+    if args.cosine_iters is not None:
+        config["scheduler_cos_iters"] = args.cosine_iters
     if args.seed is not None:
         config["rand_seed"] = args.seed
     
@@ -240,6 +259,10 @@ def build_config(args):
     # Logging
     if args.no_wandb:
         config["wandb_entity"] = None
+    if args.wandb_project:
+        config["log_project"] = args.wandb_project
+    if args.wandb_entity:
+        config["wandb_entity"] = args.wandb_entity
     if args.run_name:
         config["run_name"] = args.run_name
     
@@ -380,7 +403,9 @@ def print_config_summary(config):
     print(f"Training:")
     print(f"  batch_size={config['batch_size']}, num_iters={config['num_iters']}")
     print(f"  precision={config['precision']}")
-    print(f"  lr_max={config['scheduler_lr_max']}, warmup={config['scheduler_warmup_iters']}")
+    print(f"LR Schedule:")
+    print(f"  lr_max={config['scheduler_lr_max']}, lr_min={config['scheduler_lr_min']}")
+    print(f"  warmup_iters={config['scheduler_warmup_iters']}, cosine_iters={config['scheduler_cos_iters']}")
     print(f"Logging: {'W&B enabled' if config.get('wandb_entity') else 'W&B disabled'}")
     print("=" * 60 + "\n")
 

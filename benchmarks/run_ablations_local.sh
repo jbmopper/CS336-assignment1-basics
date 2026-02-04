@@ -27,7 +27,16 @@ else
     echo "No CUDA GPU detected - using fp32 precision (MPS compatible)"
 fi
 
-COMMON_ARGS="--data-dir ${DATA_DIR} --precision ${PRECISION} --num-iters 5000 --eval-every 500 --save-best --save-final"
+# W&B configuration (can override via env vars)
+WANDB_PROJECT="${WANDB_PROJECT:-cs336-a1}"
+WANDB_ENTITY="${WANDB_ENTITY:-jbmopper-0}"
+
+# Training hyperparameters
+NUM_ITERS=5000
+WARMUP_ITERS=500     # 10% warmup (common heuristic)
+COSINE_ITERS=5000    # Cosine decay over full training length
+
+COMMON_ARGS="--data-dir ${DATA_DIR} --precision ${PRECISION} --num-iters ${NUM_ITERS} --warmup-iters ${WARMUP_ITERS} --cosine-iters ${COSINE_ITERS} --eval-every 500 --save-best --save-final --wandb-project ${WANDB_PROJECT} --wandb-entity ${WANDB_ENTITY}"
 
 echo "Starting local ablations on GPU $GPU_ID..."
 echo "Common args: $COMMON_ARGS"

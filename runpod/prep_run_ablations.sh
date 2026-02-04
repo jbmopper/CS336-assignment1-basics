@@ -8,8 +8,13 @@
 #   s3_output_url : S3 path to save results (default: s3://.../ablations_results)
 #   gpu_id        : GPU device ID to use (default: 0)
 #
-# Example:
+# Environment variables:
+#   WANDB_PROJECT : W&B project name (default: cs336-a1)
+#   WANDB_ENTITY  : W&B entity/username (default: jbmopper-0)
+#
+# Examples:
 #   ./runpod/prep_run_ablations.sh s3://my-bucket/ablations 0
+#   WANDB_PROJECT="cs336-ablations" ./runpod/prep_run_ablations.sh
 
 set -euo pipefail
 
@@ -19,14 +24,17 @@ RUN_TS="$(date +%Y%m%d_%H%M%S)"
 S3_OUTPUT="${1:-${S3_DEFAULT_BUCKET}/ablations_results/${RUN_TS}}"
 GPU_ID="${2:-0}"
 
-# Note: W&B is enabled by default in train.py
-# Assignment ablations test architectural components:
+# W&B configuration (can be overridden via env vars)
+: "${WANDB_PROJECT:=cs336-a1}"
+: "${WANDB_ENTITY:=jbmopper-0}"
+export WANDB_PROJECT WANDB_ENTITY
+
+# Note: Assignment ablations test architectural components:
 #   - ablation_baseline: Pre-norm + RoPE + SwiGLU (default)
 #   - ablation_no_norm: Remove all layer normalization
 #   - ablation_post_norm: Post-norm instead of pre-norm
 #   - ablation_nope: No position embeddings (NoPE)
 #   - ablation_silu: SiLU (non-gated) instead of SwiGLU (gated)
-# All logged to project: cs336-a1
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 S3_TOKENIZED="${S3_TOKENIZED:-${S3_DEFAULT_BUCKET}/tokenized/}"
