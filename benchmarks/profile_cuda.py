@@ -87,9 +87,18 @@ MODEL_PRESETS = {
 }
 
 
-def get_trainer_config(model_config: dict, device: str, precision: str, checkpoint_dir: str, num_iters: int = 1000) -> dict:
-    """Create a trainer config for profiling (no W&B)."""
-    return {
+def get_trainer_config(
+    model_config: dict,
+    device: str,
+    precision: str,
+    checkpoint_dir: str,
+    num_iters: int = 1000,
+    wandb_entity: str | None = None,
+    wandb_project: str | None = None,
+    wandb_run_name: str | None = None,
+) -> dict:
+    """Create a trainer config for profiling (optional W&B)."""
+    config = {
         "model_settings": model_config["model_settings"],
         "device": device,
         "precision": precision,
@@ -103,7 +112,13 @@ def get_trainer_config(model_config: dict, device: str, precision: str, checkpoi
         "scheduler_cos_iters": num_iters,
         "checkpoint_dir": checkpoint_dir,
         "checkpoint_add_timestamp": False,
+        "profile_timers": True,  # Enable synchronized timers for accurate profiling
     }
+    if wandb_entity:
+        config["wandb_entity"] = wandb_entity
+        config["log_project"] = wandb_project
+        config["run_name"] = wandb_run_name
+    return config
 
 
 def load_data(data_dir: str):
@@ -276,6 +291,21 @@ def main():
         help="Directory containing tokenized data",
     )
     parser.add_argument(
+        "--wandb-entity",
+        default=os.environ.get("WANDB_ENTITY"),
+        help="W&B entity/username (enables W&B if set)",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        default=os.environ.get("WANDB_PROJECT"),
+        help="W&B project name (required if W&B enabled)",
+    )
+    parser.add_argument(
+        "--wandb-run-name",
+        default=os.environ.get("WANDB_RUN_NAME"),
+        help="W&B run name (required if W&B enabled)",
+    )
+    parser.add_argument(
         "--output-dir",
         default="profile_results",
         help="Directory for profiling output",
@@ -331,6 +361,12 @@ def main():
     
     print(f"Batch size: {model_config['batch_size']}")
     print(f"Config: d_model={ms['d_model']}, layers={ms['num_layers']}, heads={ms['num_heads']}, ctx={ms['context_length']}")
+
+    if args.wandb_entity:
+        if not args.wandb_project or not args.wandb_run_name:
+            print("ERROR: W&B enabled but --wandb-project or --wandb-run-name missing.")
+            return
+        print(f"W&B: {args.wandb_entity}/{args.wandb_project} ({args.wandb_run_name})")
     
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
@@ -348,6 +384,9 @@ def main():
         precision=args.precision,
         checkpoint_dir=checkpoint_dir,
         num_iters=args.steps + args.warmup + 10,  # Ensure schedule covers profile duration
+        wandb_entity=args.wandb_entity,
+        wandb_project=args.wandb_project,
+        wandb_run_name=args.wandb_run_name,
     )
     
     trainer = Trainer(TransformerLM, trainer_config, tokens, valid_tokens)
@@ -357,21 +396,24 @@ def main():
     print(f"Parameters: {num_params / 1e6:.1f}M")
     
     # Profile
-    if args.torch_profiler:
-        profile_with_torch_profiler(
-            trainer,
-            args.steps,
-            args.warmup,
-            args.output_dir,
-            args.model,
-        )
-    else:
-        profile_simple_timing(
-            trainer,
-            args.steps,
-            args.warmup,
-            args.model,
-        )
+    try:
+        if args.torch_profiler:
+            profile_with_torch_profiler(
+                trainer,
+                args.steps,
+                args.warmup,
+                args.output_dir,
+                args.model,
+            )
+        else:
+            profile_simple_timing(
+                trainer,
+                args.steps,
+                args.warmup,
+                args.model,
+            )
+    finally:
+        trainer._finish()
     
     print("\n" + "=" * 60)
     print("PROFILING COMPLETE")

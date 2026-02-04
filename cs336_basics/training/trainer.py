@@ -156,6 +156,11 @@ class Trainer:
         self.valid_tokens = valid_tokens
         self.best_eval_loss = float("inf")
         self.start_time = time.perf_counter()
+        
+        # Determine device for timers (sync only if profiling is requested)
+        # Default to False to avoid training slowdown
+        self.sync_timers = config.get("profile_timers", False)
+        self.timer_device = config["device"] if self.sync_timers else None
 
     def _log(self, metrics, step):
         """Log metrics to W&B if enabled."""
@@ -211,7 +216,7 @@ class Trainer:
 
         # Get batch
         with torch.profiler.record_function("## BATCH_GET ##"):
-            with timer("Time/Batch getting", log, device=self.config["device"]):
+            with timer("Time/Batch getting", log, device=self.timer_device):
                 inputs, labels = get_batch(
                     self.tokens,
                     self.config["batch_size"],
@@ -221,7 +226,7 @@ class Trainer:
 
         # Forward pass (with optional autocast for mixed precision)
         with torch.profiler.record_function("## FORWARD ##"):
-            with timer("Time/Forward", log, device=self.config["device"]):
+            with timer("Time/Forward", log, device=self.timer_device):
                 self.model.train()
                 if self.use_amp:
                     with torch.autocast(device_type="cuda", dtype=self.amp_dtype):
@@ -231,7 +236,7 @@ class Trainer:
 
         # Loss calculation (with optional autocast for mixed precision)
         with torch.profiler.record_function("## LOSS_CALC ##"):
-            with timer("Time/Loss calc", log, device=self.config["device"]):
+            with timer("Time/Loss calc", log, device=self.timer_device):
                 if self.use_amp:
                     with torch.autocast(device_type="cuda", dtype=self.amp_dtype):
                         loss = crossentropy(out_logits, labels)
@@ -244,7 +249,7 @@ class Trainer:
 
         # Backward pass (with GradScaler for FP16)
         with torch.profiler.record_function("## BACKWARD ##"):
-            with timer("Time/Backward", log, device=self.config["device"]):
+            with timer("Time/Backward", log, device=self.timer_device):
                 self.optimizer.zero_grad(set_to_none=True)
                 if self.scaler is not None:
                     self.scaler.scale(loss).backward()
@@ -253,7 +258,7 @@ class Trainer:
 
         # Gradient clipping - unscale first if using GradScaler
         with torch.profiler.record_function("## GRAD_NORM ##"):
-            with timer("Time/Grad norm calc", log, device=self.config["device"]):
+            with timer("Time/Grad norm calc", log, device=self.timer_device):
                 if self.scaler is not None:
                     # Unscale gradients before clipping
                     self.scaler.unscale_(self.optimizer)
@@ -266,7 +271,7 @@ class Trainer:
         log["Grad/Norm (clipped)"] = min(grad_norm.item(), self.config["gradient_clip"])
 
         with torch.profiler.record_function("## GRAD_CLIP ##"):
-            with timer("Time/Grad clip", log, device=self.config["device"]):
+            with timer("Time/Grad clip", log, device=self.timer_device):
                 gradient_clipping(
                     self.model.parameters(),
                     self.config["gradient_clip"],
@@ -286,7 +291,7 @@ class Trainer:
             param_group["lr"] = lr
 
         with torch.profiler.record_function("## OPTIMIZER_STEP ##"):
-            with timer("Time/Optimizer step", log, device=self.config["device"]):
+            with timer("Time/Optimizer step", log, device=self.timer_device):
                 if self.scaler is not None:
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
@@ -325,7 +330,7 @@ class Trainer:
         eval_batches = self.config.get("eval_batches", 1)
         total_loss = 0.0
 
-        with timer("Time/Eval batch getting", log, device=self.config["device"]):
+        with timer("Time/Eval batch getting", log, device=self.timer_device):
             self.model.eval()
             eval_batches = max(1, int(eval_batches))
             eval_inputs = []
@@ -340,7 +345,7 @@ class Trainer:
                 eval_inputs.append(batch_inputs)
                 eval_labels.append(batch_labels)
 
-        with timer("Time/Eval forward pass", log, device=self.config["device"]):
+        with timer("Time/Eval forward pass", log, device=self.timer_device):
             with torch.no_grad():
                 for batch_inputs, batch_labels in zip(eval_inputs, eval_labels, strict=True):
                     if self.use_amp:
@@ -361,7 +366,7 @@ class Trainer:
     def _save_latest_checkpoint(self, step):
         """Save latest checkpoint (for crash recovery)."""
         log = {}
-        with timer("Time/Checkpoint save (latest)", log, device=self.config["device"]):
+        with timer("Time/Checkpoint save (latest)", log, device=self.timer_device):
             save_checkpoint(
                 self.model,
                 self.optimizer,
@@ -374,7 +379,7 @@ class Trainer:
     def _save_snapshot_checkpoint(self, step):
         """Save snapshot checkpoint at save_every intervals."""
         log = {}
-        with timer("Time/Checkpoint save (snapshot)", log, device=self.config["device"]):
+        with timer("Time/Checkpoint save (snapshot)", log, device=self.timer_device):
             save_checkpoint(
                 self.model,
                 self.optimizer,
@@ -388,7 +393,7 @@ class Trainer:
     def _save_best_checkpoint(self, step):
         """Save best checkpoint based on eval loss."""
         log = {}
-        with timer("Time/Checkpoint save (best)", log, device=self.config["device"]):
+        with timer("Time/Checkpoint save (best)", log, device=self.timer_device):
             save_checkpoint(
                 self.model,
                 self.optimizer,
@@ -401,7 +406,7 @@ class Trainer:
     def _save_final_checkpoint(self, step):
         """Save final checkpoint after training."""
         log = {}
-        with timer("Time/Checkpoint save (final)", log, device=self.config["device"]):
+        with timer("Time/Checkpoint save (final)", log, device=self.timer_device):
             save_checkpoint(
                 self.model,
                 self.optimizer,

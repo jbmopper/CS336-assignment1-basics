@@ -15,8 +15,15 @@ set -euo pipefail
 
 # --- Configuration ---
 S3_DEFAULT_BUCKET="s3://cs336-spot-287998774376-us-west-2/assignment1-basics"
-S3_OUTPUT="${1:-${S3_DEFAULT_BUCKET}/profiling_results/$(date +%Y%m%d_%H%M%S)}"
+RUN_TS="$(date +%Y%m%d_%H%M%S)"
+S3_OUTPUT="${1:-${S3_DEFAULT_BUCKET}/profiling_results/${RUN_TS}}"
 MODE="${2:-all}"
+
+# Default W&B settings (can be overridden via env)
+: "${WANDB_ENTITY:=jbmopper-0}"
+: "${WANDB_PROJECT:=cs336-nvidia-profile}"
+: "${WANDB_RUN_NAME:=profile-${RUN_TS}}"
+export WANDB_ENTITY WANDB_PROJECT WANDB_RUN_NAME
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 S3_TOKENIZED="${S3_DEFAULT_BUCKET}/tokenized/"
