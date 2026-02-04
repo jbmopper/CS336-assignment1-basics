@@ -19,11 +19,10 @@ RUN_TS="$(date +%Y%m%d_%H%M%S)"
 S3_OUTPUT="${1:-${S3_DEFAULT_BUCKET}/ablations_results/${RUN_TS}}"
 GPU_ID="${2:-0}"
 
-# Default W&B settings (can be overridden via env)
-: "${WANDB_ENTITY:=jbmopper-0}"
-: "${WANDB_PROJECT:=cs336-ablations}"
-: "${WANDB_RUN_NAME:=ablations-${RUN_TS}}"
-export WANDB_ENTITY WANDB_PROJECT WANDB_RUN_NAME
+# Note: W&B is enabled by default in train.py
+# Each ablation run will be logged with name "ablation_<experiment_name>"
+# (e.g., ablation_baseline, ablation_wide, ablation_deep, ablation_wide_ffn)
+# To the project: cs336-a1 (hardcoded in train.py)
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 S3_TOKENIZED="${S3_TOKENIZED:-${S3_DEFAULT_BUCKET}/tokenized/}"

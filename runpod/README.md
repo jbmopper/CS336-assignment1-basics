@@ -149,8 +149,14 @@ The prep script will:
 - Create necessary symlinks
 - Set up checkpoints directory
 - Start background S3 sync (every 60s)
-- Run all ablation experiments sequentially
+- Run all ablation experiments sequentially with W&B logging
 - Perform final sync on completion
+
+**W&B Logging:** Each ablation is logged to Weights & Biases with run names:
+- `ablation_baseline` (d_model=512, num_layers=4)
+- `ablation_wide` (d_model=768, num_layers=2)
+- `ablation_deep` (d_model=384, num_layers=8)
+- `ablation_wide_ffn` (d_model=512, d_ff=2048)
 
 ## Data Location
 
