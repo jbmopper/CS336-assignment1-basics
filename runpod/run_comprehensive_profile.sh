@@ -26,7 +26,7 @@ CONFIGS=(
     
     # Bottleneck & Stress Tests (sorted by memory usage)
     "latency_bound     --batch-size 1 --seq-len 128 --d-model 512 --num-heads 8 --num-layers 12 --d-ff 1536"
-    "misaligned_dims   --batch-size 33 --seq-len 256 --d-model 513 --num-heads 9 --num-layers 6 --d-ff 1537"
+    "misaligned_dims   --batch-size 34 --seq-len 257 --d-model 514 --num-heads 2 --num-layers 6 --d-ff 1538"
     "bad_head_size     --batch-size 32 --seq-len 256 --d-model 672 --num-heads 12 --num-layers 6 --d-ff 1792"
     "vocab_bottleneck  --batch-size 64 --seq-len 256 --d-model 512 --num-heads 8 --num-layers 4 --d-ff 1536 --vocab-size 50257"
     "wide_ffn          --batch-size 32 --seq-len 256 --d-model 768 --num-heads 12 --num-layers 6 --d-ff 4096"
@@ -171,10 +171,10 @@ run_phase_2() {
         fi
         
         if [[ $NCU_AVAILABLE -eq 1 ]]; then
-            # Run ncu profile (1 step, no warmup - NCU is slow enough without it)
+            # Run ncu profile (1 step, no warmup)
+            # Removed --target-processes all to avoid process tree issues with uv run
             CUDA_VISIBLE_DEVICES=0 run_cmd "$NAME" "$OUT_DIR" ncu \
                 --set detailed \
-                --target-processes all \
                 -o "$OUT_DIR/analysis" \
                 --force-overwrite \
                 uv run python -m benchmarks.profile_cuda \
