@@ -22,6 +22,7 @@ EXCLUDES=(
   "--exclude" "*.tmp"
   "--exclude" "*.partial"
   "--exclude" "*.incomplete"
+  "--exclude" "latest.pt"  # Skip crash-recovery checkpoint (updated every iteration)
 )
 
 sync_once() {

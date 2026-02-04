@@ -27,7 +27,7 @@ else
     echo "No CUDA GPU detected - using fp32 precision (MPS compatible)"
 fi
 
-COMMON_ARGS="--data-dir ${DATA_DIR} --precision ${PRECISION} --num-iters 5000 --eval-every 500"
+COMMON_ARGS="--data-dir ${DATA_DIR} --precision ${PRECISION} --num-iters 5000 --eval-every 500 --save-best --save-final"
 
 echo "Starting local ablations on GPU $GPU_ID..."
 echo "Common args: $COMMON_ARGS"

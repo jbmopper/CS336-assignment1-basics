@@ -174,6 +174,11 @@ def parse_args():
     parser.add_argument("--eval-every", type=int, help="Evaluate every N iterations")
     parser.add_argument("--eval-batches", type=int, default=1, help="Number of batches for evaluation")
     
+    # Checkpointing
+    parser.add_argument("--save-best", action="store_true", help="Save best checkpoint by eval loss")
+    parser.add_argument("--save-final", action="store_true", help="Save final checkpoint after training")
+    parser.add_argument("--save-every", type=int, help="Save snapshot checkpoint every N iterations")
+    
     return parser.parse_args()
 
 
@@ -243,6 +248,14 @@ def build_config(args):
         config["eval_every"] = args.eval_every
     if args.eval_batches is not None:
         config["eval_batches"] = args.eval_batches
+    
+    # Checkpointing
+    if args.save_best:
+        config["save_best"] = True
+    if args.save_final:
+        config["save_final"] = True
+    if args.save_every is not None:
+        config["save_every"] = args.save_every
     
     # Set vocab_size in model_settings
     config["model_settings"]["vocab_size"] = config["vocab_size"]

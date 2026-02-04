@@ -148,8 +148,9 @@ The prep script will:
 - Download tokenized data from S3
 - Create necessary symlinks
 - Set up checkpoints directory
-- Start background S3 sync (every 60s)
+- Start background S3 sync (every 60s, skips `latest.pt` to reduce overhead)
 - Run all ablation experiments sequentially with W&B logging
+- Save best and final checkpoints (synced to S3)
 - Perform final sync on completion
 
 **W&B Logging:** Each ablation is logged to Weights & Biases with run names:
