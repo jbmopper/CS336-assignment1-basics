@@ -126,6 +126,32 @@ ncu --set full --target-processes all -o kernel_analysis \
     uv run python -m benchmarks.profile_cuda --model assignment --precision bf16 --steps 1
 ```
 
+### 8. Run Ablation Studies
+
+Run architecture ablations (wide vs deep models, FFN scaling, etc.) with automatic S3 sync:
+
+```bash
+# All-in-one: data sync + ablations + checkpoint backup
+./runpod/prep_run_ablations.sh s3://YOUR-BUCKET/ablations 0
+
+# Or with default S3 bucket
+./runpod/prep_run_ablations.sh
+
+# Manual run (after data setup)
+export DATA_DIR=/workspace/tokenized
+export CHECKPOINT_DIR=/workspace/checkpoints/ablations
+export PRECISION=bf16
+./benchmarks/run_ablations_local.sh 0
+```
+
+The prep script will:
+- Download tokenized data from S3
+- Create necessary symlinks
+- Set up checkpoints directory
+- Start background S3 sync (every 60s)
+- Run all ablation experiments sequentially
+- Perform final sync on completion
+
 ## Data Location
 
 Tokenized data is stored in S3:

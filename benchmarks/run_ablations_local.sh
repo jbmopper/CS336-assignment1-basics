@@ -8,6 +8,7 @@ export CUDA_VISIBLE_DEVICES=$GPU_ID
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DATA_DIR="${DATA_DIR:-${REPO_ROOT}/tokenized}"
+CHECKPOINT_DIR="${CHECKPOINT_DIR:-${REPO_ROOT}/checkpoints/ablations}"
 
 # Common settings
 if [[ ! -d "${DATA_DIR}" ]]; then
@@ -39,7 +40,7 @@ run_exp() {
     echo "=== Running Experiment: $NAME ==="
     uv run python -m cs336_basics.train \
         --run-name "ablation_${NAME}" \
-        --checkpoint-dir "${REPO_ROOT}/checkpoints/ablations/${NAME}" \
+        --checkpoint-dir "${CHECKPOINT_DIR}/${NAME}" \
         $COMMON_ARGS \
         "$@"
 }
