@@ -16,7 +16,17 @@ if [[ ! -d "${DATA_DIR}" ]]; then
     exit 1
 fi
 
-COMMON_ARGS="--data-dir ${DATA_DIR} --precision bf16 --num-iters 5000 --eval-every 500 --save-every 5000"
+# Auto-detect precision based on device
+# MPS (Mac) doesn't support bf16, CUDA supports bf16
+PRECISION="${PRECISION:-fp32}"
+if command -v nvidia-smi &> /dev/null; then
+    PRECISION="bf16"
+    echo "Detected CUDA GPU - using bf16 precision"
+else
+    echo "No CUDA GPU detected - using fp32 precision (MPS compatible)"
+fi
+
+COMMON_ARGS="--data-dir ${DATA_DIR} --precision ${PRECISION} --num-iters 5000 --eval-every 500 --save-every 5000"
 
 echo "Starting local ablations on GPU $GPU_ID..."
 echo "Common args: $COMMON_ARGS"
