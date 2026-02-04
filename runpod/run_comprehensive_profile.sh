@@ -171,7 +171,7 @@ run_phase_2() {
         fi
         
         if [[ $NCU_AVAILABLE -eq 1 ]]; then
-            # Run ncu profile (1 step only with 10 warmup iterations!)
+            # Run ncu profile (1 step, no warmup - NCU is slow enough without it)
             CUDA_VISIBLE_DEVICES=0 run_cmd "$NAME" "$OUT_DIR" ncu \
                 --set detailed \
                 --target-processes all \
@@ -183,7 +183,7 @@ run_phase_2() {
                     --data-dir "$DATA_DIR" \
                     --precision bf16 \
                     --steps 1 \
-                    --warmup 10 \
+                    --warmup 0 \
                     "${WARGS[@]}" \
                     $ARGS
         else
