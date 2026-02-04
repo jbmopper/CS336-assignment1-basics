@@ -47,21 +47,31 @@ run_exp() {
 
 # --- Define Experiments Below ---
 
+# Auto-detect batch size based on device
+# CUDA GPUs can handle batch_size=64, MPS/CPU should use 32
+BATCH_SIZE="${BATCH_SIZE:-64}"
+if ! command -v nvidia-smi &> /dev/null; then
+    BATCH_SIZE=32
+    echo "No CUDA GPU detected - using batch_size=32 (MPS/CPU compatible)"
+else
+    echo "CUDA GPU detected - using batch_size=64"
+fi
+
 # 1. Baseline (Assignment Config)
 run_exp "baseline" \
-    --d-model 512 --num-layers 4 --num-heads 16 --d-ff 1344 --batch-size 64
+    --d-model 512 --num-layers 4 --num-heads 16 --d-ff 1344 --batch-size ${BATCH_SIZE}
 
 # 2. Wide (More heads/width, fewer layers)
 run_exp "wide" \
-    --d-model 768 --num-layers 2 --num-heads 12 --d-ff 2048 --batch-size 64
+    --d-model 768 --num-layers 2 --num-heads 12 --d-ff 2048 --batch-size ${BATCH_SIZE}
 
 # 3. Deep (More layers, narrower)
 run_exp "deep" \
-    --d-model 384 --num-layers 8 --num-heads 12 --d-ff 1024 --batch-size 64
+    --d-model 384 --num-layers 8 --num-heads 12 --d-ff 1024 --batch-size ${BATCH_SIZE}
 
 # 4. Wider FFN (Test FFN scaling)
 run_exp "wide_ffn" \
-    --d-model 512 --num-layers 4 --num-heads 16 --d-ff 2048 --batch-size 64
+    --d-model 512 --num-layers 4 --num-heads 16 --d-ff 2048 --batch-size ${BATCH_SIZE}
 
 echo ""
 echo "All ablations complete!"
