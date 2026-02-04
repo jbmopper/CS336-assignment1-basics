@@ -37,6 +37,7 @@ CONFIGS=(
 
 NSYS_AVAILABLE=1
 NCU_AVAILABLE=1
+NCU_HAS_PERMS=1
 command -v nsys >/dev/null 2>&1 || NSYS_AVAILABLE=0
 command -v ncu >/dev/null 2>&1 || NCU_AVAILABLE=0
 
@@ -45,6 +46,18 @@ if [[ $NSYS_AVAILABLE -eq 0 ]]; then
 fi
 if [[ $NCU_AVAILABLE -eq 0 ]]; then
     echo "WARNING: ncu not found in PATH. Phase 2 will be skipped."
+else
+    # Check if NCU has GPU performance counter permissions
+    echo "Checking NCU permissions..."
+    NCU_TEST_OUTPUT=$(ncu --set basic python -c "import torch; x = torch.randn(10,10,device='cuda'); y = x@x" 2>&1)
+    if echo "$NCU_TEST_OUTPUT" | grep -q "ERR_NVGPUCTRPERM"; then
+        echo "WARNING: NCU lacks GPU performance counter permissions (ERR_NVGPUCTRPERM)."
+        echo "         Phase 2 (NCU profiling) will be skipped."
+        echo "         To enable: run container with --privileged or enable perf counters on host."
+        NCU_HAS_PERMS=0
+    else
+        echo "NCU permissions OK."
+    fi
 fi
 
 if [[ ! -f "${DATA_DIR}/tinystories_train.npy" ]] && [[ ! -f "${DATA_DIR}/tinystories_train_fixed.npy" ]]; then
@@ -170,11 +183,17 @@ run_phase_2() {
             WARGS=("${WANDB_ARGS[@]}" --wandb-run-name "${WANDB_RUN_NAME_BASE}-${NAME}-ncu")
         fi
         
-        if [[ $NCU_AVAILABLE -eq 1 ]]; then
+        if [[ $NCU_AVAILABLE -eq 1 ]] && [[ $NCU_HAS_PERMS -eq 1 ]]; then
             # Run ncu profile (1 step, no warmup)
-            # Removed --target-processes all to avoid process tree issues with uv run
+            # --target-processes all is required to follow the process tree through 'uv run' to the actual Python process
+            # --set basic is much faster than detailed (fewer kernel replays)
+            # --launch-skip skips early kernels (model init), --launch-count limits total kernels profiled
             CUDA_VISIBLE_DEVICES=0 run_cmd "$NAME" "$OUT_DIR" ncu \
-                --set detailed \
+                --set basic \
+                --target-processes all \
+                --launch-skip 100 \
+                --launch-count 50 \
+                --print-summary per-kernel \
                 -o "$OUT_DIR/analysis" \
                 --force-overwrite \
                 uv run python -m benchmarks.profile_cuda \
@@ -188,7 +207,11 @@ run_phase_2() {
                     $ARGS
         else
             SKIPPED_JOBS+=("${NAME}")
-            echo "WARNING: ncu not available; skipping '$NAME'"
+            if [[ $NCU_HAS_PERMS -eq 0 ]]; then
+                echo "WARNING: ncu lacks permissions; skipping '$NAME'"
+            else
+                echo "WARNING: ncu not available; skipping '$NAME'"
+            fi
             continue
         fi
             
