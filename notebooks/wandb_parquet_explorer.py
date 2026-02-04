@@ -28,7 +28,6 @@ def _():
             if any(sub in lower for sub in substrings):
                 return col
         return None
-
     return pick_first_column, pick_first_contains
 
 
@@ -126,7 +125,7 @@ def _(df_raw, mo):
         ])
     else:
         _output = mo.md("⚠️ No sweep ID column found in data")
-    
+
     _output
     return sweep_id_col, sweep_selector
 
@@ -163,9 +162,9 @@ def _(df_raw, mo, pl, sweep_id_col, sweep_selector):
         ])
     else:
         _output = mo.md("⚠️ Cannot create plot - check that data has required columns: _step, Eval Loss, run_name")
-    
+
     _output
-    return (df_filtered, plot_mode_selector)
+    return df_filtered, plot_mode_selector
 
 
 @app.cell
@@ -208,7 +207,7 @@ def _(df_filtered, mo, plot_mode_selector, px, sweep_id_col):
         plot = mo.ui.plotly(fig)
 
     plot
-    return (fig, plot)
+    return (plot,)
 
 
 @app.cell
@@ -217,7 +216,7 @@ def _(df_filtered, mo, plot):
 
     # Display selected data from the plot
     selected_data = plot.value
-    
+
     _output = None
     if selected_data is not None and len(selected_data) > 0:
         # plot.value contains the selected points as a list of dicts
@@ -228,9 +227,9 @@ def _(df_filtered, mo, plot):
         ])
     else:
         _output = mo.md("*💡 No points selected. Use the box select (⬚) or lasso select (⚬) tool in the plot toolbar above to select data points.*")
-    
+
     _output
-    return (selected_data,)
+    return
 
 
 @app.cell
@@ -298,14 +297,7 @@ def _(mo):
 
 
 @app.cell
-def _(
-    df_filtered,
-    mo,
-    pick_first_column,
-    pick_first_contains,
-    pl,
-    px,
-):
+def _(df_filtered, mo, pick_first_column, pl, px):
     mo.stop(df_filtered is None or df_filtered.height == 0)
 
     _columns = df_filtered.columns
@@ -426,7 +418,7 @@ def _(
             instability_plot if instability_plot is not None else mo.md(""),
         ]
     )
-    return instability_df, instability_plot
+    return
 
 
 @app.cell
