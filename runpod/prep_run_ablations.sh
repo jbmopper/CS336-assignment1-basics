@@ -20,9 +20,13 @@ S3_OUTPUT="${1:-${S3_DEFAULT_BUCKET}/ablations_results/${RUN_TS}}"
 GPU_ID="${2:-0}"
 
 # Note: W&B is enabled by default in train.py
-# Each ablation run will be logged with name "ablation_<experiment_name>"
-# (e.g., ablation_baseline, ablation_wide, ablation_deep, ablation_wide_ffn)
-# To the project: cs336-a1 (hardcoded in train.py)
+# Assignment ablations test architectural components:
+#   - ablation_baseline: Pre-norm + RoPE + SwiGLU (default)
+#   - ablation_no_norm: Remove all layer normalization
+#   - ablation_post_norm: Post-norm instead of pre-norm
+#   - ablation_nope: No position embeddings (NoPE)
+#   - ablation_silu: SiLU (non-gated) instead of SwiGLU (gated)
+# All logged to project: cs336-a1
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 S3_TOKENIZED="${S3_TOKENIZED:-${S3_DEFAULT_BUCKET}/tokenized/}"

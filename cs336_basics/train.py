@@ -148,6 +148,16 @@ def parse_args():
     parser.add_argument("--num-layers", type=int, help="Override num_layers")
     parser.add_argument("--d-ff", type=int, help="Override d_ff")
     
+    # Architecture ablation options
+    parser.add_argument("--norm-mode", type=str, choices=["pre", "post", "none"], 
+                        help="Layer norm mode: pre (default), post, or none")
+    parser.add_argument("--no-rope", action="store_true", 
+                        help="Disable RoPE position embeddings (NoPE)")
+    parser.add_argument("--ffn-type", type=str, choices=["swiglu", "silu"],
+                        help="FFN type: swiglu (default) or silu")
+    parser.add_argument("--ffn-hidden-dim", type=int,
+                        help="FFN hidden dimension (default: 8/3*d_model for swiglu, 4*d_model for silu)")
+    
     # Logging
     parser.add_argument(
         "--no-wandb",
@@ -211,6 +221,16 @@ def build_config(args):
         config["model_settings"]["d_ff"] = args.d_ff
     if args.context_length is not None:
         config["model_settings"]["context_length"] = args.context_length
+    
+    # Architecture ablation options
+    if args.norm_mode is not None:
+        config["model_settings"]["norm_mode"] = args.norm_mode
+    if args.no_rope:
+        config["model_settings"]["use_rope"] = False
+    if args.ffn_type is not None:
+        config["model_settings"]["ffn_type"] = args.ffn_type
+    if args.ffn_hidden_dim is not None:
+        config["model_settings"]["ffn_hidden_dim"] = args.ffn_hidden_dim
     
     # Logging
     if args.no_wandb:

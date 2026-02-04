@@ -153,10 +153,11 @@ The prep script will:
 - Perform final sync on completion
 
 **W&B Logging:** Each ablation is logged to Weights & Biases with run names:
-- `ablation_baseline` (d_model=512, num_layers=4)
-- `ablation_wide` (d_model=768, num_layers=2)
-- `ablation_deep` (d_model=384, num_layers=8)
-- `ablation_wide_ffn` (d_model=512, d_ff=2048)
+- `ablation_baseline` - Pre-norm + RoPE + SwiGLU (default assignment config)
+- `ablation_no_norm` - No layer normalization (norm_mode=none)
+- `ablation_post_norm` - Post-norm instead of pre-norm
+- `ablation_nope` - No position embeddings (NoPE)
+- `ablation_silu` - SiLU FFN (non-gated) instead of SwiGLU (gated)
 
 ## Data Location
 
