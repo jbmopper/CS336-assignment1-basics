@@ -92,38 +92,46 @@ def main():
     setDeviceAndSeeds(config)
     model.to(config["device"])
 
+    end_of_text_token = "<|endoftext|>"
+    context_length = config.get("context_length")
+    if context_length is None:
+        model_cfg = config.get("model_settings", config)
+        context_length = model_cfg.get("context_length", 256)
+
     print("Welcome to tinystories/assignment 1 inference.  Please submit input at the prompt, or type '!q' to quit.")
     quits = ["!q"]
     model.eval()
-    
-    signal.signal(signal.SIGINT, handle_sigint)
-    
-    with torch.inference_mode():
-        output = None
-        while True:
-            if output is None or output == "<|endoftext|>":
-                # sub = input("T$ ").strip()
-                sub = input("T$ ") # removed strip for fun and profit
-                if sub in quits:
-                    break
-            else:
-                sub = output
 
-            inputs = tokenizer.encode(sub)[: args.max_new_tokens]
-            inputs = torch.tensor(inputs, device=config['device'], dtype=torch.long)
-            inputs = inputs.unsqueeze(0)
-            
-            logits = model.forward(inputs)
-            pred_logit = logits[:, -1, :]
-            
-            token_ids = sample_top_p(pred_logit, args.temperature, args.top_p_threshold)
-            new_output = tokenizer.decode(token_ids.tolist())
-            
-            if output is not None:
-                output = output + new_output
-            else:
-                output = new_output
-            print(output)
+    signal.signal(signal.SIGINT, handle_sigint)
+
+    with torch.inference_mode():
+        while True:
+            sub = input("T$ ")
+            if sub in quits:
+                break
+
+            # Accumulated text (prompt + generated) for conditioning; we show prompt then stream the rest
+            output = sub
+            # Print prompt so the line starts with user input, then we'll append generated tokens
+            print(output, end="", flush=True)
+
+            for _ in range(args.max_new_tokens):
+                # Use last context_length tokens so we don't exceed model context
+                input_ids = tokenizer.encode(output)[-context_length:]
+                inputs = torch.tensor(input_ids, device=config["device"], dtype=torch.long)
+                inputs = inputs.unsqueeze(0)
+
+                logits = model.forward(inputs)
+                pred_logit = logits[:, -1, :]
+                token_ids = sample_top_p(pred_logit, args.temperature, args.top_p_threshold)
+                new_text = tokenizer.decode(token_ids.tolist())
+
+                if new_text == end_of_text_token:
+                    break
+                output = output + new_text
+                print(new_text, end="", flush=True)
+
+            print()  # newline after this completion
 
 
 if __name__ == "__main__":
