@@ -7,9 +7,6 @@ app = marimo.App(width="full")
 @app.cell
 def _():
     import marimo as mo
-    from cs336_basics.nn import scaled_dot_product_attention
-    import torch.utils.benchmark as benchmark
-    import torch
     return (mo,)
 
 
@@ -914,7 +911,7 @@ def _(mo):
 
 @app.cell
 def _(mo, svg_vars, svg_zoom):
-    with open("notebooks/cs336_forward.svg") as f:
+    with open("notebooks/public/cs336_forward.svg") as f:
         svg = f.read()
 
     # Substitute all template variables from svg_vars
