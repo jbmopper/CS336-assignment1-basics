@@ -44,6 +44,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -145,6 +147,75 @@ def _parse_states(value: str) -> set[str] | None:
     return states or None
 
 
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        # JSON does not represent NaN/Inf consistently; keep these stable as strings.
+        if math.isnan(value) or math.isinf(value):
+            return str(value)
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, set):
+        values = [_json_safe(v) for v in value]
+        return sorted(values, key=lambda v: json.dumps(v, sort_keys=True, separators=(",", ":"), default=str))
+    return str(value)
+
+
+def _encode_complex(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return str(value) if (math.isnan(value) or math.isinf(value)) else value
+    if isinstance(value, (Mapping, list, tuple, set)):
+        return json.dumps(_json_safe(value), sort_keys=True, separators=(",", ":"), default=str)
+    return str(value)
+
+
+def _flatten_mapping(values: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for raw_key, value in values.items():
+        key = str(raw_key)
+        if not key:
+            continue
+        col = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, Mapping):
+            if value:
+                out.update(_flatten_mapping(value, col))
+            else:
+                out[col] = None
+            continue
+        out[col] = _encode_complex(value)
+    return out
+
+
+def _sanitize_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for raw_key, value in row.items():
+        key = str(raw_key)
+        if not key:
+            continue
+        if isinstance(value, Mapping):
+            out.update(_flatten_mapping(value, key))
+        else:
+            out[key] = _encode_complex(value)
+    return out
+
+
+def _rows_to_df(rows: list[dict[str, Any]]) -> pl.DataFrame:
+    # strict=False allows mixed per-row types to coerce safely instead of hard-failing.
+    try:
+        return pl.from_dicts(rows, infer_schema_length=None, strict=False)
+    except TypeError:
+        # Backward compatibility with older Polars that may not expose strict.
+        return pl.from_dicts(rows, infer_schema_length=None)
+
+
 def _run_to_row(run: wandb.apis.public.Run, sweep_id_override: str | None = None) -> dict[str, Any]:
     row: dict[str, Any] = {
         "run_id": run.id,
@@ -153,10 +224,10 @@ def _run_to_row(run: wandb.apis.public.Run, sweep_id_override: str | None = None
         "created_at": run.created_at,
         "sweep_id": sweep_id_override or (run.sweep.id if run.sweep else None),
     }
-    row.update({f"config.{k}": v for k, v in run.config.items() if not k.startswith("_")})
+    row.update(_flatten_mapping({k: v for k, v in run.config.items() if not k.startswith("_")}, "config"))
     summary = getattr(run.summary, "_json_dict", dict(run.summary))
-    row.update({k: v for k, v in summary.items() if not k.startswith("_")})
-    return row
+    row.update(_flatten_mapping({k: v for k, v in summary.items() if not k.startswith("_")}))
+    return _sanitize_row(row)
 
 
 def _collect_history_rows(
@@ -174,13 +245,13 @@ def _collect_history_rows(
         "sweep_id": sweep_id_override or (run.sweep.id if run.sweep else None),
     }
     if include_config:
-        base_row.update({f"config.{k}": v for k, v in run.config.items() if not k.startswith("_")})
+        base_row.update(_flatten_mapping({k: v for k, v in run.config.items() if not k.startswith("_")}, "config"))
 
     count = 0
     for row in run.scan_history(keys=history_keys):
         row_out = base_row.copy()
-        row_out.update(row)
-        rows.append(row_out)
+        row_out.update(_sanitize_row(row))
+        rows.append(_sanitize_row(row_out))
         count += 1
         if history_max_rows is not None and count >= history_max_rows:
             break
@@ -201,7 +272,7 @@ def _write_history(
                 f.write("\n")
         return
 
-    df = pl.from_dicts(history_rows, infer_schema_length=None)
+    df = _rows_to_df(history_rows)
     if output_format == "csv":
         df.write_csv(output_path)
     else:
@@ -294,7 +365,7 @@ def _write_rows(rows: list[dict[str, Any]], output_path: Path, output_format: st
                 f.write("\n")
         return
 
-    df = pl.from_dicts(rows, infer_schema_length=None)
+    df = _rows_to_df(rows)
     if output_format == "csv":
         df.write_csv(output_path)
     else:
