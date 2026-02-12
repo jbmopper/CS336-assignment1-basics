@@ -1,0 +1,4 @@
+lr_sweeps: jbmopper-0/lr_sweeps
+ablations: jbmopper-0/cs336-ablations-2
+mps_models: jbmopper-0/cs336-a1-mps-model_comp
+gpu_models: jbmopper-0/cs336-a1-gpu-model_comp
