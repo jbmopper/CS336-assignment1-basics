@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local build outputs
+build/
+dist/
+
+# Optional local artifacts
+model.onnx
+model.onnx.metadata.json
+tokenizer/

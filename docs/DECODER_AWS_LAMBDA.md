@@ -1,5 +1,7 @@
 # Running the Decoder on AWS Lambda
 
+If you want the new ONNX-based path (recommended for Lambda), see `docs/ONNX_LAMBDA.md` and `lambda-onnx-inference/`.
+
 The decoder (`cs336_basics/decode.py`) is currently CLI-only. Here are practical options for running it on **AWS Lambda** (the serverless function service).
 
 ---
