@@ -172,8 +172,14 @@ class Trainer:
         if self.use_wandb and self.wandb_run is not None:
             self.wandb_run.finish()
 
-    def train_eval_loop(self):
-        """Main training loop that orchestrates training and evaluation."""
+    def train_eval_loop(self, step_callback=None):
+        """Main training loop that orchestrates training and evaluation.
+
+        Args:
+            step_callback: Optional callable(step, log_dict) -> dict|None.
+                Called after each training step with the current metrics.
+                Returned dict (if any) is merged into the step's log before W&B upload.
+        """
         save_every = self.config.get("save_every")
         save_best = self.config.get("save_best", False)
         save_final = self.config.get("save_final", False)
@@ -197,6 +203,11 @@ class Trainer:
             # Save latest checkpoint every iteration (for crash recovery)
             checkpoint_log = self._save_latest_checkpoint(i)
             train_log.update(checkpoint_log)
+
+            if step_callback is not None:
+                extra = step_callback(i, train_log)
+                if extra:
+                    train_log.update(extra)
 
             # Log all metrics
             self._log(train_log, step=i)

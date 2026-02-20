@@ -1,0 +1,39 @@
+# WandB Optimizer Sweep Configuration
+#
+# Sweeps lr_max, beta2, weight_decay, and warmup_iters using a composite
+# metric M that rewards warmup loss increase and penalizes high training
+# loss during cosine decay, with exponential time-weighting (kappa=1.03).
+#
+# Usage:
+#   1. Initialize the sweep:
+#      wandb sweep cs336_basics/optimizer_sweep_config.yaml
+#
+#   2. Start sweep agent(s):
+#      wandb agent <entity>/<project>/<sweep_id>
+
+program: cs336_basics/train_optimizer_sweep.py
+method: bayes
+metric:
+  name: Sweep Metric M
+  goal: minimize
+
+parameters:
+  scheduler_lr_max:
+    distribution: log_uniform_values
+    min: 5e-4
+    max: 5e-2
+  optimizer_beta2:
+    distribution: uniform
+    min: 0.95
+    max: 0.999
+  optimizer_weight_decay:
+    distribution: log_uniform_values
+    min: 0.001
+    max: 0.1
+
+early_terminate:
+  type: hyperband
+  min_iter: 100
+  max_iter: 1000
+  eta: 3
+  s: 2
