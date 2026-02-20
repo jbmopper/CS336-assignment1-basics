@@ -5,17 +5,17 @@ WandB Optimizer Sweep Training Script
 Sweeps optimizer hyperparameters (lr_max, beta2, weight_decay, warmup_iters)
 using a composite metric M that Hyperband minimizes for early stopping.
 
-Composite metric M (logged every METRIC_INTERVAL training steps):
+Composite metric M (logged every evaluation step):
 
     M = Σ f(ℓ_ι, L_ι) · κ^ι
 
-where ℓ_ι is the rolling average of METRIC_WINDOW training-loss deltas,
-L_ι is the raw training loss, ρ is the LR delta, and:
+where ℓ_ι is the rolling average of METRIC_WINDOW eval-loss deltas,
+L_ι is the current eval loss, ρ is the LR delta between eval points, and:
 
     f = -ℓ   when ρ ≥ 0  (warmup: reward loss increase)
     f =  L   when ρ < 0  (decay:  penalize high absolute loss)
 
-κ = 1.03 gives ~16× weighting of final vs initial metric contributions.
+With eval_every=5 over 1000 steps, there are 200 eval points for Hyperband.
 
 Usage:
     # Initialize sweep (run once):
@@ -40,9 +40,8 @@ from cs336_basics.training import Trainer, setup_device, load_tokens
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # ── Metric hyper-parameters ──────────────────────────────────────────────────
-METRIC_INTERVAL = 10   # sample training loss every N steps
-METRIC_KAPPA = 1.03    # exponential time-weighting factor
-METRIC_WINDOW = 5      # rolling-average window (in metric samples, not steps)
+METRIC_KAPPA = 1.015   # exponential time-weighting
+METRIC_WINDOW = 5      # rolling-average window (in eval points)
 
 # ── Default training config ──────────────────────────────────────────────────
 DEFAULT_CONFIG = dict(
@@ -83,9 +82,9 @@ DEFAULT_CONFIG = dict(
     optimizer_eps=1e-8,
     optimizer_weight_decay=1e-2,
 
-    # Evaluation (kept separate from metric; purely for reporting)
-    eval_every=50,
-    eval_batches=5,
+    # Evaluation cadence drives sweep metric logging/Hyperband iterations
+    eval_every=5,
+    eval_batches=1,
 
     # W&B
     wandb_entity="jbmopper-0",
@@ -105,48 +104,43 @@ class SweepMetricTracker:
 
     def __init__(
         self,
-        interval: int = METRIC_INTERVAL,
         kappa: float = METRIC_KAPPA,
         window: int = METRIC_WINDOW,
     ):
-        self.interval = interval
         self.kappa = kappa
         self.window = window
-        self.losses: list[float] = []
+        self.eval_losses: list[float] = []
         self.lrs: list[float] = []
         self.M = 0.0
         self.iota = 0
 
     def __call__(self, step: int, log: dict) -> dict | None:
-        if step == 0 or step % self.interval != 0:
-            return None
-
-        loss = log.get("Loss")
+        # Only update/log sweep metric on evaluation steps
+        eval_loss = log.get("Eval Loss")
         lr = log.get("LR")
-        if loss is None or lr is None:
+        if eval_loss is None or lr is None:
             return None
 
-        self.losses.append(loss)
+        self.eval_losses.append(eval_loss)
         self.lrs.append(lr)
 
-        # Need window+1 samples to compute `window` deltas
-        if len(self.losses) < self.window + 1:
-            return None
+        # Update M once rolling window is full (need window+1 points for `window` deltas)
+        if len(self.eval_losses) >= self.window + 1:
+            recent = self.eval_losses[-(self.window + 1):]
+            deltas = [recent[i + 1] - recent[i] for i in range(self.window)]
+            ell = sum(deltas) / self.window
 
-        recent = self.losses[-(self.window + 1):]
-        deltas = [recent[i + 1] - recent[i] for i in range(self.window)]
-        ell = sum(deltas) / self.window
+            rho = self.lrs[-1] - self.lrs[-2]
 
-        rho = self.lrs[-1] - self.lrs[-2]
+            if rho >= 0:
+                f_val = -ell    # warmup: reward loss increase
+            else:
+                f_val = eval_loss  # decay: penalize high absolute eval loss
 
-        if rho >= 0:
-            f_val = -ell        # warmup: reward loss increase
-        else:
-            f_val = loss        # decay: penalize high absolute loss
+            self.M += f_val * (self.kappa ** self.iota)
+            self.iota += 1
 
-        self.M += f_val * (self.kappa ** self.iota)
-        self.iota += 1
-
+        # Always log M on eval points so Hyperband iteration count matches eval count
         return {"Sweep Metric M": self.M}
 
 
@@ -235,7 +229,8 @@ def train_sweep():
     print(f"Creating model with settings: {model_settings}")
 
     run.config.update({
-        "metric_interval": METRIC_INTERVAL,
+        "metric_source": "Eval Loss",
+        "metric_eval_every": config["eval_every"],
         "metric_kappa": METRIC_KAPPA,
         "metric_window": METRIC_WINDOW,
     })

@@ -1,8 +1,8 @@
 # WandB Optimizer Sweep Configuration
 #
-# Sweeps lr_max, beta2, weight_decay, and warmup_iters using a composite
-# metric M that rewards warmup loss increase and penalizes high training
-# loss during cosine decay, with exponential time-weighting (kappa=1.03).
+# Sweeps lr_max, beta2, and weight_decay using a composite metric M that
+# rewards warmup eval-loss increase and penalizes high eval loss during
+# cosine decay, with exponential time-weighting (kappa=1.015).
 #
 # Usage:
 #   1. Initialize the sweep:
@@ -20,7 +20,7 @@ metric:
 parameters:
   scheduler_lr_max:
     distribution: log_uniform_values
-    min: 5e-4
+    min: 2e-4
     max: 5e-2
   optimizer_beta2:
     distribution: uniform
@@ -33,7 +33,5 @@ parameters:
 
 early_terminate:
   type: hyperband
-  min_iter: 100
-  max_iter: 1000
-  eta: 3
-  s: 2
+  min_iter: 25
+  eta: 2
