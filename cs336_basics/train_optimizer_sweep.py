@@ -84,7 +84,7 @@ DEFAULT_CONFIG = dict(
 
     # Evaluation cadence drives sweep metric logging/Hyperband iterations
     eval_every=5,
-    eval_batches=1,
+    eval_batches=2,
 
     # W&B
     wandb_entity="jbmopper-0",
