@@ -151,11 +151,30 @@ trap cleanup EXIT
 
 SWEEP_ID="${1:-}"
 
+normalize_sweep_id() {
+    local raw="$1"
+    raw="${raw#wandb agent }"
+    raw="${raw#*wandb agent }"
+    echo "${raw}" | tr -d '[:space:]'
+}
+
+is_valid_sweep_id() {
+    local sid="$1"
+    [[ "${sid}" =~ ^[[:alnum:]_-]+$ ]] \
+        || [[ "${sid}" =~ ^[[:alnum:]_-]+/[[:alnum:]_-]+$ ]] \
+        || [[ "${sid}" =~ ^[[:alnum:]_-]+/[[:alnum:]_-]+/[[:alnum:]_-]+$ ]]
+}
+
 if [[ -z "${SWEEP_ID}" ]]; then
     echo "Creating new sweep from ${SWEEP_CONFIG}..."
-    SWEEP_ID=$(uv run wandb sweep "${SWEEP_CONFIG}" 2>&1 | grep -oP '[\w-]+/[\w-]+/[\w]+$' || true)
+    SWEEP_CREATE_OUTPUT="$(uv run wandb sweep "${SWEEP_CONFIG}" 2>&1)"
+    echo "${SWEEP_CREATE_OUTPUT}"
 
-    if [[ -z "${SWEEP_ID}" ]]; then
+    # Parse from the standard "Run sweep agent with: wandb agent <id>" line.
+    SWEEP_ID="$(echo "${SWEEP_CREATE_OUTPUT}" | awk '/Run sweep agent with:/ {print $NF}' | tail -n1)"
+    SWEEP_ID="$(normalize_sweep_id "${SWEEP_ID}")"
+
+    if [[ -z "${SWEEP_ID}" ]] || ! is_valid_sweep_id "${SWEEP_ID}"; then
         echo "Could not parse sweep ID. Creating sweep manually..."
         uv run wandb sweep "${SWEEP_CONFIG}"
         echo ""
@@ -165,6 +184,22 @@ if [[ -z "${SWEEP_ID}" ]]; then
     fi
     echo "Created sweep: ${SWEEP_ID}"
 else
+    SWEEP_ID="$(normalize_sweep_id "${SWEEP_ID}")"
+    # If only bare sweep token is passed, prefix entity/project.
+    if [[ "${SWEEP_ID}" =~ ^[[:alnum:]_-]+$ ]]; then
+        SWEEP_ID="${WANDB_ENTITY}/${WANDB_PROJECT}/${SWEEP_ID}"
+    elif [[ "${SWEEP_ID}" =~ ^[[:alnum:]_-]+/[[:alnum:]_-]+$ ]]; then
+        SWEEP_ID="${WANDB_ENTITY}/${SWEEP_ID}"
+    fi
+
+    if ! is_valid_sweep_id "${SWEEP_ID}"; then
+        echo "ERROR: Invalid sweep ID format: ${SWEEP_ID}"
+        echo "Expected one of:"
+        echo "  <sweep>"
+        echo "  <project>/<sweep>"
+        echo "  <entity>/<project>/<sweep>"
+        exit 1
+    fi
     echo "Joining existing sweep: ${SWEEP_ID}"
 fi
 
