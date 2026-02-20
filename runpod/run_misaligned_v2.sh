@@ -28,16 +28,46 @@ S3_OUTPUT="${S3_OUTPUT:-${S3_DEFAULT_BUCKET}/profiling_results/${RUN_TS}}"
 COMMON_ARGS="--batch-size 34 --seq-len 257 --d-model 480 --num-heads 8 --num-layers 6 --d-ff 1538"
 
 cd "$(dirname "$0")/.."
+REPO_ROOT="$(pwd)"
 
-if [[ ! -f "${DATA_DIR}/tinystories_train.npy" ]] && [[ ! -f "${DATA_DIR}/tinystories_train_fixed.npy" ]]; then
-    # Try local tokenized dir
-    if [[ -f "tokenized/tinystories_train_fixed.npy" ]]; then
-        DATA_DIR="tokenized"
-    else
-        echo "ERROR: Tokenized data not found at ${DATA_DIR} or ./tokenized/"
-        exit 1
-    fi
+has_tokenized_data() {
+    local d="$1"
+    [[ -f "${d}/tinystories_train_fixed.npy" && -f "${d}/tinystories_valid_fixed.npy" ]]
+}
+
+has_legacy_tokenized_data() {
+    local d="$1"
+    [[ -f "${d}/tinystories_train.npy" && -f "${d}/tinystories_valid.npy" ]]
+}
+
+if ! has_tokenized_data "${DATA_DIR}"; then
+    # Try common alternatives on RunPod/local checkouts.
+    for candidate in "${REPO_ROOT}/tokenized" "tokenized" "/workspace/tokenized" "/workspace/CS336-assignment1-basics/tokenized"; do
+        if has_tokenized_data "${candidate}"; then
+            DATA_DIR="${candidate}"
+            break
+        fi
+    done
 fi
+
+if ! has_tokenized_data "${DATA_DIR}"; then
+    echo "ERROR: Tokenized data not found."
+    echo "Expected fixed files:"
+    echo "  tinystories_train_fixed.npy"
+    echo "  tinystories_valid_fixed.npy"
+    echo "Checked DATA_DIR=${DATA_DIR} plus common paths:"
+    echo "  ${REPO_ROOT}/tokenized"
+    echo "  /workspace/tokenized"
+    echo "  /workspace/CS336-assignment1-basics/tokenized"
+    if has_legacy_tokenized_data "${DATA_DIR}"; then
+        echo "Found legacy non-fixed files in DATA_DIR; please use fixed tokenized files."
+    fi
+    echo "Set DATA_DIR explicitly, e.g.:"
+    echo "  export DATA_DIR=/workspace/CS336-assignment1-basics/tokenized"
+    exit 1
+fi
+
+export DATA_DIR
 
 WANDB_ARGS=()
 if [[ -n "${WANDB_ENTITY:-}" ]] && [[ -n "${WANDB_PROJECT:-}" ]] && [[ -n "${WANDB_RUN_NAME:-}" ]]; then
