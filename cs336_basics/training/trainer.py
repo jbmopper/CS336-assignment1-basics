@@ -198,7 +198,8 @@ class Trainer:
                     self.best_eval_loss = eval_loss
                     train_log["Eval Best loss"] = eval_loss
                     if save_best:
-                        self._save_best_checkpoint(i)
+                        best_ckpt_log = self._save_best_checkpoint(i)
+                        train_log.update(best_ckpt_log)
 
             # Save latest checkpoint every iteration (for crash recovery)
             checkpoint_log = self._save_latest_checkpoint(i)
@@ -209,15 +210,18 @@ class Trainer:
                 if extra:
                     train_log.update(extra)
 
-            # Log all metrics
-            self._log(train_log, step=i)
-
             # Save snapshot checkpoint at save_every intervals
             if save_every is not None and i % save_every == 0:
-                self._save_snapshot_checkpoint(i)
+                snapshot_log = self._save_snapshot_checkpoint(i)
+                train_log.update(snapshot_log)
+
+            # Log all metrics once per training step to keep W&B step monotonic
+            self._log(train_log, step=i)
 
         if save_final:
-            self._save_final_checkpoint(self.config["num_iters"] - 1)
+            final_log = self._save_final_checkpoint(self.config["num_iters"] - 1)
+            # Log final checkpoint timing at a new terminal step.
+            self._log(final_log, step=self.config["num_iters"])
         self._finish()
 
     def _train_step(self, step):
@@ -398,8 +402,7 @@ class Trainer:
                 f"{self.config['checkpoint_dir']}/checkpoint_{step}.pt",
                 self.config,
             )
-        # Log snapshot save time
-        self._log(log, step=step)
+        return log
 
     def _save_best_checkpoint(self, step):
         """Save best checkpoint based on eval loss."""
@@ -412,7 +415,7 @@ class Trainer:
                 f"{self.config['checkpoint_dir']}/best.pt",
                 self.config,
             )
-        self._log(log, step=step)
+        return log
 
     def _save_final_checkpoint(self, step):
         """Save final checkpoint after training."""
@@ -425,4 +428,4 @@ class Trainer:
                 f"{self.config['checkpoint_dir']}/final.pt",
                 self.config,
             )
-        self._log(log, step=step)
+        return log
