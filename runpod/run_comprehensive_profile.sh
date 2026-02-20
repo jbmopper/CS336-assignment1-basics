@@ -27,6 +27,7 @@ CONFIGS=(
     # Bottleneck & Stress Tests (sorted by memory usage)
     "latency_bound     --batch-size 1 --seq-len 128 --d-model 512 --num-heads 8 --num-layers 12 --d-ff 1536"
     "misaligned_dims   --batch-size 34 --seq-len 257 --d-model 514 --num-heads 2 --num-layers 6 --d-ff 1538"
+    "misaligned_v2     --batch-size 34 --seq-len 257 --d-model 480 --num-heads 8 --num-layers 6 --d-ff 1538"
     "bad_head_size     --batch-size 32 --seq-len 256 --d-model 672 --num-heads 12 --num-layers 6 --d-ff 1792"
     "vocab_bottleneck  --batch-size 64 --seq-len 256 --d-model 512 --num-heads 8 --num-layers 4 --d-ff 1536 --vocab-size 50257"
     "wide_ffn          --batch-size 32 --seq-len 256 --d-model 768 --num-heads 12 --num-layers 6 --d-ff 4096"
