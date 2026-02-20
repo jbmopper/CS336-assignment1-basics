@@ -33,20 +33,20 @@ REPO_ROOT="$(pwd)"
 
 has_tokenized_data() {
     local d="$1"
-    [[ -f "${d}/tinystories_train_fixed.npy" && -f "${d}/tinystories_valid_fixed.npy" ]]
-}
-
-has_legacy_tokenized_data() {
-    local d="$1"
     [[ -f "${d}/tinystories_train.npy" && -f "${d}/tinystories_valid.npy" ]]
 }
 
-download_fixed_tokenized_files() {
+has_fixed_tokenized_data() {
+    local d="$1"
+    [[ -f "${d}/tinystories_train_fixed.npy" && -f "${d}/tinystories_valid_fixed.npy" ]]
+}
+
+download_tokenized_files() {
     local dest="$1"
     local src="${S3_TOKENIZED%/}"
     mkdir -p "${dest}"
-    aws s3 cp "${src}/tinystories_train_fixed.npy" "${dest}/tinystories_train_fixed.npy" --no-progress
-    aws s3 cp "${src}/tinystories_valid_fixed.npy" "${dest}/tinystories_valid_fixed.npy" --no-progress
+    aws s3 cp "${src}/tinystories_train.npy" "${dest}/tinystories_train.npy" --no-progress
+    aws s3 cp "${src}/tinystories_valid.npy" "${dest}/tinystories_valid.npy" --no-progress
 }
 
 if ! has_tokenized_data "${DATA_DIR}"; then
@@ -60,29 +60,29 @@ if ! has_tokenized_data "${DATA_DIR}"; then
 fi
 
 if ! has_tokenized_data "${DATA_DIR}"; then
-    echo "Fixed tokenized data not found locally; attempting S3 pull (fixed TinyStories files only)..."
+    echo "Tokenized data not found locally; attempting S3 pull (TinyStories files only)..."
     echo "  Source: ${S3_TOKENIZED%/}"
     echo "  Destination: ${DATA_DIR}"
     if ! command -v aws &>/dev/null; then
-        echo "ERROR: aws CLI not found; cannot download fixed files from S3."
+        echo "ERROR: aws CLI not found; cannot download files from S3."
     elif ! aws sts get-caller-identity &>/dev/null; then
-        echo "ERROR: AWS credentials invalid or expired; cannot download fixed files from S3."
-    elif ! download_fixed_tokenized_files "${DATA_DIR}"; then
-        echo "ERROR: Failed to download fixed files into ${DATA_DIR}."
+        echo "ERROR: AWS credentials invalid or expired; cannot download files from S3."
+    elif ! download_tokenized_files "${DATA_DIR}"; then
+        echo "ERROR: Failed to download files into ${DATA_DIR}."
     fi
 fi
 
 if ! has_tokenized_data "${DATA_DIR}"; then
     echo "ERROR: Tokenized data not found."
-    echo "Expected fixed files:"
-    echo "  tinystories_train_fixed.npy"
-    echo "  tinystories_valid_fixed.npy"
+    echo "Expected files:"
+    echo "  tinystories_train.npy"
+    echo "  tinystories_valid.npy"
     echo "Checked DATA_DIR=${DATA_DIR} plus common paths:"
     echo "  ${REPO_ROOT}/tokenized"
     echo "  /workspace/tokenized"
     echo "  /workspace/CS336-assignment1-basics/tokenized"
-    if has_legacy_tokenized_data "${DATA_DIR}"; then
-        echo "Found legacy non-fixed files in DATA_DIR; please use fixed tokenized files."
+    if has_fixed_tokenized_data "${DATA_DIR}"; then
+        echo "Found only fixed files in DATA_DIR; this script is configured for normal filenames."
     fi
     echo "Set DATA_DIR explicitly, e.g.:"
     echo "  export DATA_DIR=/workspace/CS336-assignment1-basics/tokenized"
