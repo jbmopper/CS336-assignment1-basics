@@ -20,8 +20,8 @@ metric:
 parameters:
   scheduler_lr_max:
     distribution: log_uniform_values
-    min: 2e-4
-    max: 5e-2
+    min: 5e-4
+    max: 5e-1
   optimizer_beta2:
     distribution: uniform
     min: 0.95

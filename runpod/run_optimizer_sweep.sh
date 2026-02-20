@@ -18,7 +18,7 @@ cd "${REPO_ROOT}"
 
 DATA_DIR="${DATA_DIR:-/workspace/tokenized}"
 WANDB_ENTITY="${WANDB_ENTITY:-jbmopper-0}"
-WANDB_PROJECT="cs336-optimizer-sweep"
+WANDB_PROJECT="cs336-optimizer-sweep-high"
 SWEEP_CONFIG="cs336_basics/optimizer_sweep_config.yaml"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-${REPO_ROOT}/checkpoints/optimizer_sweeps}"
 SYNC_INTERVAL="${SYNC_INTERVAL:-60}"

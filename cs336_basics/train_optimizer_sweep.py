@@ -88,7 +88,7 @@ DEFAULT_CONFIG = dict(
 
     # W&B
     wandb_entity="jbmopper-0",
-    log_project="cs336-optimizer-sweep",
+    log_project="cs336-optimizer-sweep-high",
 
     rand_seed=42,
 )
