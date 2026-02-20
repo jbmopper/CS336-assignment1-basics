@@ -22,6 +22,7 @@ NAME="misaligned_v2"
 
 # --- S3 sync config ---
 S3_DEFAULT_BUCKET="s3://cs336-spot-287998774376-us-west-2/assignment1-basics"
+S3_TOKENIZED="${S3_TOKENIZED:-${S3_DEFAULT_BUCKET}/tokenized}"
 RUN_TS="$(date +%Y%m%d_%H%M%S)"
 S3_OUTPUT="${S3_OUTPUT:-${S3_DEFAULT_BUCKET}/profiling_results/${RUN_TS}}"
 
@@ -40,6 +41,14 @@ has_legacy_tokenized_data() {
     [[ -f "${d}/tinystories_train.npy" && -f "${d}/tinystories_valid.npy" ]]
 }
 
+download_fixed_tokenized_files() {
+    local dest="$1"
+    local src="${S3_TOKENIZED%/}"
+    mkdir -p "${dest}"
+    aws s3 cp "${src}/tinystories_train_fixed.npy" "${dest}/tinystories_train_fixed.npy" --no-progress
+    aws s3 cp "${src}/tinystories_valid_fixed.npy" "${dest}/tinystories_valid_fixed.npy" --no-progress
+}
+
 if ! has_tokenized_data "${DATA_DIR}"; then
     # Try common alternatives on RunPod/local checkouts.
     for candidate in "${REPO_ROOT}/tokenized" "tokenized" "/workspace/tokenized" "/workspace/CS336-assignment1-basics/tokenized"; do
@@ -48,6 +57,19 @@ if ! has_tokenized_data "${DATA_DIR}"; then
             break
         fi
     done
+fi
+
+if ! has_tokenized_data "${DATA_DIR}"; then
+    echo "Fixed tokenized data not found locally; attempting S3 pull (fixed TinyStories files only)..."
+    echo "  Source: ${S3_TOKENIZED%/}"
+    echo "  Destination: ${DATA_DIR}"
+    if ! command -v aws &>/dev/null; then
+        echo "ERROR: aws CLI not found; cannot download fixed files from S3."
+    elif ! aws sts get-caller-identity &>/dev/null; then
+        echo "ERROR: AWS credentials invalid or expired; cannot download fixed files from S3."
+    elif ! download_fixed_tokenized_files "${DATA_DIR}"; then
+        echo "ERROR: Failed to download fixed files into ${DATA_DIR}."
+    fi
 fi
 
 if ! has_tokenized_data "${DATA_DIR}"; then
