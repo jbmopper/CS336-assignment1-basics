@@ -46,8 +46,8 @@ METRIC_WINDOW = 5      # rolling-average window (in eval points)
 # ── Default training config ──────────────────────────────────────────────────
 DEFAULT_CONFIG = dict(
     # Paths (overridden by DATA_DIR env on pod)
-    train_file=str(BASE_DIR / "tokenized/tinystories_train_fixed.npy"),
-    valid_file=str(BASE_DIR / "tokenized/tinystories_valid_fixed.npy"),
+    train_file=str(BASE_DIR / "tokenized/tinystories_train.npy"),
+    valid_file=str(BASE_DIR / "tokenized/tinystories_valid.npy"),
     checkpoint_dir=str(BASE_DIR / "checkpoints/optimizer_sweeps"),
 
     save_best=True,
@@ -151,15 +151,25 @@ def train_sweep():
 
     config = DEFAULT_CONFIG.copy()
 
-    # Pod data directory support
+    def resolve_tokenized_pair(data_dir: str) -> tuple[str, str] | None:
+        candidates = (
+            ("tinystories_train.npy", "tinystories_valid.npy"),
+            ("tinystories_train_fixed.npy", "tinystories_valid_fixed.npy"),
+        )
+        for train_name, valid_name in candidates:
+            train_path = os.path.join(data_dir, train_name)
+            valid_path = os.path.join(data_dir, valid_name)
+            if os.path.exists(train_path) and os.path.exists(valid_path):
+                return train_path, valid_path
+        return None
+
+    # Prefer DATA_DIR on pod if provided; support normal and *_fixed naming.
     data_dir = os.environ.get("DATA_DIR")
-    if data_dir:
-        train_path = os.path.join(data_dir, "tinystories_train_fixed.npy")
-        if os.path.exists(train_path):
-            config["train_file"] = train_path
-            config["valid_file"] = os.path.join(
-                data_dir, "tinystories_valid_fixed.npy"
-            )
+    selected_pair = resolve_tokenized_pair(data_dir) if data_dir else None
+    if selected_pair is None:
+        selected_pair = resolve_tokenized_pair(str(BASE_DIR / "tokenized"))
+    if selected_pair is not None:
+        config["train_file"], config["valid_file"] = selected_pair
 
     # Per-run checkpoint directory
     run_checkpoint_dir = os.path.join(config["checkpoint_dir"], run.id)
