@@ -50,8 +50,9 @@ DEFAULT_CONFIG = dict(
     valid_file=str(BASE_DIR / "tokenized/tinystories_valid.npy"),
     checkpoint_dir=str(BASE_DIR / "checkpoints/optimizer_sweeps"),
 
-    save_best=True,
-    save_final=True,
+    save_best=False,
+    save_final=False,
+    save_latest=False,
 
     # Tokenizer
     vocab_size=10000,

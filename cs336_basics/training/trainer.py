@@ -202,8 +202,9 @@ class Trainer:
                         train_log.update(best_ckpt_log)
 
             # Save latest checkpoint every iteration (for crash recovery)
-            checkpoint_log = self._save_latest_checkpoint(i)
-            train_log.update(checkpoint_log)
+            if self.config.get("save_latest", True):
+                checkpoint_log = self._save_latest_checkpoint(i)
+                train_log.update(checkpoint_log)
 
             if step_callback is not None:
                 extra = step_callback(i, train_log)
