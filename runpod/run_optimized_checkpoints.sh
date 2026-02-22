@@ -122,7 +122,7 @@ COMMON_ARGS="--data-dir ${DATA_DIR} \
     --beta2 ${BETA2} \
     --weight-decay ${WEIGHT_DECAY} \
     --eval-every ${EVAL_EVERY} \
-    --save-best --save-final \
+    --save-best --save-final --no-save-every \
     --wandb-project ${WANDB_PROJECT} \
     --wandb-entity ${WANDB_ENTITY}"
 

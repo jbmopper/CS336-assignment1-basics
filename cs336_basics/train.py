@@ -196,6 +196,7 @@ def parse_args():
     parser.add_argument("--save-best", action="store_true", help="Save best checkpoint by eval loss")
     parser.add_argument("--save-final", action="store_true", help="Save final checkpoint after training")
     parser.add_argument("--save-every", type=int, help="Save snapshot checkpoint every N iterations")
+    parser.add_argument("--no-save-every", action="store_true", help="Disable periodic snapshot checkpoints")
     
     return parser.parse_args()
 
@@ -290,7 +291,9 @@ def build_config(args):
         config["save_best"] = True
     if args.save_final:
         config["save_final"] = True
-    if args.save_every is not None:
+    if args.no_save_every:
+        config["save_every"] = None
+    elif args.save_every is not None:
         config["save_every"] = args.save_every
     
     # Set vocab_size in model_settings
