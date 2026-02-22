@@ -1,0 +1,41 @@
+{
+  "created_at": "2026-02-22T15:22:55.620325",
+  "project": "jbmopper-0/cs336-optimizer-sweep-high",
+  "sweep_id": "l28yv8f7",
+  "history_keys": [
+    "Sweep Metric M",
+    "Loss",
+    "LR",
+    "Eval Loss",
+    "Eval Best loss",
+    "Grad/Norm (clipped)",
+    "Grad/Norm (unclipped)",
+    "Time/Total step",
+    "Throughput/Tokens per sec",
+    "_step"
+  ],
+  "history_max_rows": 0,
+  "max_runs": 0,
+  "states": "",
+  "outputs": {
+    "main": "notebooks/benchmark_results/optimizer_sweep_l28yv8f7_20260222_151711_main.parquet",
+    "history": "notebooks/benchmark_results/optimizer_sweep_l28yv8f7_20260222_151711_history.parquet"
+  },
+  "command": [
+    "/Users/juliusmopper/Dev/stanford-cs336/assignment1-basics/.venv/bin/python3",
+    "/Users/juliusmopper/Dev/stanford-cs336/assignment1-basics/notebooks/wandb_fetch_runs.py",
+    "--project",
+    "jbmopper-0/cs336-optimizer-sweep-high",
+    "--sweep-ids",
+    "l28yv8f7",
+    "--include-history",
+    "--history-keys",
+    "Sweep Metric M,Loss,LR,Eval Loss,Eval Best loss,Grad/Norm (clipped),Grad/Norm (unclipped),Time/Total step,Throughput/Tokens per sec,_step",
+    "--history-max-rows",
+    "0",
+    "--history-output",
+    "notebooks/benchmark_results/optimizer_sweep_l28yv8f7_20260222_151711_history.parquet",
+    "--output",
+    "notebooks/benchmark_results/optimizer_sweep_l28yv8f7_20260222_151711_main.parquet"
+  ]
+}
