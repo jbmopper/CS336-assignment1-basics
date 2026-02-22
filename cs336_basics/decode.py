@@ -116,8 +116,9 @@ def main():
             print(output, end="", flush=True)
 
             for _ in range(args.max_new_tokens):
-                # Use last context_length tokens so we don't exceed model context
                 input_ids = tokenizer.encode(output)[-context_length:]
+                if not input_ids:
+                    input_ids = tokenizer.encode(end_of_text_token)
                 inputs = torch.tensor(input_ids, device=config["device"], dtype=torch.long)
                 inputs = inputs.unsqueeze(0)
 
