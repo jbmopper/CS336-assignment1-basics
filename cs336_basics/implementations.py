@@ -230,21 +230,29 @@ def load_checkpoint(
     optimizer: torch.optim.Optimizer,
 ) -> int:
     """Load model and optimizer state from a checkpoint file. Returns iteration."""
-    obj = torch.load(src)
+    device = next(model.parameters()).device
+    obj = torch.load(src, map_location=device)
     model.load_state_dict(obj["model"])
     optimizer.load_state_dict(obj["optimizer"])
     return obj["iteration"]
 
-def load_model(src) -> tuple[dict, TransformerLM]:
-    obj = torch.load(src)
-    config = obj["config"]
-    if config["device"] == None:
-        config["device"] = "cpu"
+def _infer_device() -> str:
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
-    # Model params may be nested under "model_settings" or at top level
+
+def load_model(src, device: str | None = None) -> tuple[dict, TransformerLM]:
+    target_device = device or _infer_device()
+    obj = torch.load(src, map_location=target_device)
+    config = obj["config"]
+    config["device"] = target_device
+
     model_cfg = config.get("model_settings", config)
 
-    model =  TransformerLM(
+    model = TransformerLM(
         model_cfg["vocab_size"],
         model_cfg["d_model"],
         model_cfg["num_heads"],
@@ -257,7 +265,12 @@ def load_model(src) -> tuple[dict, TransformerLM]:
         ffn_type=model_cfg.get("ffn_type", "swiglu"),
         ffn_hidden_dim=model_cfg.get("ffn_hidden_dim"),
         final_norm=model_cfg.get("final_norm"),
-    ).to(config["device"])
+    )
 
-    model.load_state_dict(obj["model"])
+    state = obj["model"]
+    if target_device == "mps":
+        state = {k: v.float() if v.dtype == torch.bfloat16 else v for k, v in state.items()}
+    model.load_state_dict(state)
+    model.to(target_device)
+
     return config, model

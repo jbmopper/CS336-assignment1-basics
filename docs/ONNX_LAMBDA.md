@@ -5,6 +5,8 @@ This repo now includes:
 - `cs336_basics/export_onnx.py` to export checkpoints in eval mode to ONNX.
 - `lambda-onnx-inference/` as a standalone AWS Lambda scaffold using ONNX Runtime.
 
+If you want GPU serving on Modal L4 instead, see `docs/ONNX_MODAL.md` and `modal-onnx-inference/`.
+
 ## 1. Export Checkpoint to ONNX
 
 ```bash
