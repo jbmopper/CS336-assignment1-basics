@@ -145,6 +145,11 @@ def parse_args():
     parser.add_argument("--context-length", type=int, help="Override context length")
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     
+    # Optimizer overrides
+    parser.add_argument("--beta2", type=float, help="Override Adam beta2")
+    parser.add_argument("--weight-decay", type=float, help="Override weight decay")
+    parser.add_argument("--gradient-clip", type=float, help="Override gradient clip norm")
+    
     # Model architecture overrides
     parser.add_argument("--d-model", type=int, help="Override d_model")
     parser.add_argument("--num-heads", type=int, help="Override num_heads")
@@ -233,6 +238,14 @@ def build_config(args):
         config["scheduler_cos_iters"] = args.cosine_iters
     if args.seed is not None:
         config["rand_seed"] = args.seed
+    
+    # Optimizer overrides
+    if args.beta2 is not None:
+        config["optimizer_betas"] = (config["optimizer_betas"][0], args.beta2)
+    if args.weight_decay is not None:
+        config["optimizer_weight_decay"] = args.weight_decay
+    if args.gradient_clip is not None:
+        config["gradient_clip"] = args.gradient_clip
     
     # Model architecture overrides
     if args.d_model is not None:
