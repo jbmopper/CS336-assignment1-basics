@@ -45,11 +45,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Iterable
 
 import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pq
 import wandb
 
 
@@ -114,13 +117,26 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--history-keys",
         default="",
-        help="Comma-separated history keys to fetch (default: all keys).",
+        help=(
+            "Comma-separated history keys to keep in output. "
+            "History is scanned without server-side key filtering to avoid sparse-row drops."
+        ),
     )
     parser.add_argument(
         "--history-max-rows",
         type=int,
         default=0,
         help="Max history rows per run (0 means no limit).",
+    )
+    parser.add_argument(
+        "--history-source",
+        choices=["export", "scan"],
+        default="export",
+        help=(
+            "History fetch backend. "
+            "'export' uses run.download_history_exports() parquet files (full-fidelity, no sampling). "
+            "'scan' uses run.scan_history()."
+        ),
     )
     return parser.parse_args()
 
@@ -216,6 +232,56 @@ def _rows_to_df(rows: list[dict[str, Any]]) -> pl.DataFrame:
         return pl.from_dicts(rows, infer_schema_length=None)
 
 
+def _to_non_large_arrow_type(dtype: pa.DataType) -> pa.DataType:
+    if pa.types.is_large_string(dtype):
+        return pa.string()
+    if pa.types.is_large_binary(dtype):
+        return pa.binary()
+    if pa.types.is_large_list(dtype):
+        value_type = _to_non_large_arrow_type(dtype.value_type)
+        return pa.list_(value_type)
+    if pa.types.is_struct(dtype):
+        fields = [
+            pa.field(
+                field.name,
+                _to_non_large_arrow_type(field.type),
+                nullable=field.nullable,
+                metadata=field.metadata,
+            )
+            for field in dtype
+        ]
+        return pa.struct(fields)
+    return dtype
+
+
+def _to_non_large_arrow_table(df: pl.DataFrame) -> pa.Table:
+    table = df.to_arrow()
+    schema = table.schema
+    new_fields = []
+    changed = False
+    for field in schema:
+        new_type = _to_non_large_arrow_type(field.type)
+        if new_type != field.type:
+            changed = True
+            new_fields.append(pa.field(field.name, new_type, nullable=field.nullable, metadata=field.metadata))
+        else:
+            new_fields.append(field)
+    if not changed:
+        return table
+    return table.cast(pa.schema(new_fields))
+
+
+def _write_df(df: pl.DataFrame, output_path: Path, output_format: str) -> None:
+    if output_format == "csv":
+        df.write_csv(output_path)
+        return
+    if output_format == "parquet":
+        # Normalize Arrow "large_*" logical types for downstream consumers that require standard types.
+        pq.write_table(_to_non_large_arrow_table(df), output_path)
+        return
+    raise ValueError(f"Unsupported tabular output format: {output_format}")
+
+
 def _run_to_row(run: wandb.apis.public.Run, sweep_id_override: str | None = None) -> dict[str, Any]:
     row: dict[str, Any] = {
         "run_id": run.id,
@@ -236,8 +302,13 @@ def _collect_history_rows(
     history_keys: list[str] | None,
     history_max_rows: int | None,
     include_config: bool = True,
+    history_source: str = "export",
 ) -> list[dict[str, Any]]:
-    """Collect history rows for a run, including metadata and optionally config."""
+    """Collect history rows for a run, including metadata and optionally config.
+
+    Important: scan_history(keys=...) can drop rows when not all keys co-occur at a step.
+    To avoid sparse-step artifacts, we always scan full history and apply key filtering locally.
+    """
     rows = []
     base_row: dict[str, Any] = {
         "run_id": run.id,
@@ -247,14 +318,46 @@ def _collect_history_rows(
     if include_config:
         base_row.update(_flatten_mapping({k: v for k, v in run.config.items() if not k.startswith("_")}, "config"))
 
-    count = 0
-    for row in run.scan_history(keys=history_keys):
-        row_out = base_row.copy()
-        row_out.update(_sanitize_row(row))
-        rows.append(_sanitize_row(row_out))
-        count += 1
-        if history_max_rows is not None and count >= history_max_rows:
-            break
+    requested_keys = set(history_keys or [])
+
+    def _has_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, float) and math.isnan(value):
+            return False
+        return True
+
+    def _process_history_rows(history_iter: Iterable[Mapping[str, Any]]) -> None:
+        count = 0
+        for row in history_iter:
+            history_part = _sanitize_row(row)
+            if requested_keys:
+                # Keep the row only if any requested key has a real value at this step.
+                if not any((key in history_part and _has_value(history_part[key])) for key in requested_keys):
+                    continue
+                history_part = {key: value for key, value in history_part.items() if key in requested_keys}
+
+            row_out = base_row.copy()
+            row_out.update(history_part)
+            rows.append(_sanitize_row(row_out))
+            count += 1
+            if history_max_rows is not None and count >= history_max_rows:
+                break
+
+    if history_source == "export":
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                run.download_history_exports(download_dir=tmp_dir)
+                parquet_files = sorted(Path(tmp_dir).rglob("*.parquet"))
+                if parquet_files:
+                    history_df = pl.concat([pl.read_parquet(pq) for pq in parquet_files], how="diagonal_relaxed")
+                    _process_history_rows(history_df.to_dicts())
+                    return rows
+                print(f"  WARNING: no history export parquet files for run {run.id}; falling back to scan_history()")
+        except Exception as exc:
+            print(f"  WARNING: history export failed for run {run.id}: {exc}; falling back to scan_history()")
+
+    _process_history_rows(run.scan_history())
     return rows
 
 
@@ -273,10 +376,7 @@ def _write_history(
         return
 
     df = _rows_to_df(history_rows)
-    if output_format == "csv":
-        df.write_csv(output_path)
-    else:
-        df.write_parquet(output_path)
+    _write_df(df, output_path, output_format)
 
 
 def _fetch_project_runs(
@@ -288,6 +388,7 @@ def _fetch_project_runs(
     history_keys: list[str] | None = None,
     history_max_rows: int | None = None,
     history_include_config: bool = True,
+    history_source: str = "export",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Fetch runs from a project, optionally collecting history."""
     runs = api.runs(project_path)
@@ -309,6 +410,7 @@ def _fetch_project_runs(
                     history_keys=history_keys,
                     history_max_rows=history_max_rows,
                     include_config=history_include_config,
+                    history_source=history_source,
                 )
             )
         count += 1
@@ -326,6 +428,7 @@ def _fetch_sweep_runs(
     history_keys: list[str] | None = None,
     history_max_rows: int | None = None,
     history_include_config: bool = True,
+    history_source: str = "export",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Fetch runs from sweeps, optionally collecting history."""
     run_rows = []
@@ -349,6 +452,7 @@ def _fetch_sweep_runs(
                         history_keys=history_keys,
                         history_max_rows=history_max_rows,
                         include_config=history_include_config,
+                        history_source=history_source,
                     )
                 )
             count += 1
@@ -366,10 +470,7 @@ def _write_rows(rows: list[dict[str, Any]], output_path: Path, output_format: st
         return
 
     df = _rows_to_df(rows)
-    if output_format == "csv":
-        df.write_csv(output_path)
-    else:
-        df.write_parquet(output_path)
+    _write_df(df, output_path, output_format)
 
 
 def main() -> None:
@@ -390,6 +491,7 @@ def main() -> None:
     history_keys = history_keys or None
     history_max_rows = _max_rows_limit(args.history_max_rows)
     history_include_config = args.history_include_config
+    history_source = args.history_source
     states = _parse_states(args.states)
 
     api = wandb.Api()
@@ -407,6 +509,7 @@ def main() -> None:
             history_keys=history_keys,
             history_max_rows=history_max_rows,
             history_include_config=history_include_config,
+            history_source=history_source,
         )
     else:
         rows, history_rows = _fetch_sweep_runs(
@@ -419,6 +522,7 @@ def main() -> None:
             history_keys=history_keys,
             history_max_rows=history_max_rows,
             history_include_config=history_include_config,
+            history_source=history_source,
         )
 
     if not rows:

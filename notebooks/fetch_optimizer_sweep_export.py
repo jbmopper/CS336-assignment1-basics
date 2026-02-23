@@ -7,6 +7,7 @@ This wrapper uses notebooks/wandb_fetch_runs.py to export:
 2) history-level data (selected keys, all available steps per run)
 
 Output filenames are timestamped and made non-colliding in notebooks/benchmark_results.
+By default this uses W&B history export parquet files (unsampled, full fidelity).
 """
 
 from __future__ import annotations
@@ -106,6 +107,12 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print the command and planned output paths without running.",
     )
+    parser.add_argument(
+        "--history-source",
+        choices=["export", "scan"],
+        default="export",
+        help="History backend to pass to wandb_fetch_runs.py (default: export, unsampled).",
+    )
     return parser.parse_args()
 
 
@@ -138,6 +145,8 @@ def main() -> int:
         ",".join(history_keys),
         "--history-max-rows",
         str(args.history_max_rows),
+        "--history-source",
+        args.history_source,
         "--history-output",
         str(history_path),
         "--output",
@@ -167,6 +176,7 @@ def main() -> int:
         "sweep_id": args.sweep_id,
         "history_keys": history_keys,
         "history_max_rows": args.history_max_rows,
+        "history_source": args.history_source,
         "max_runs": args.max_runs,
         "states": args.states,
         "outputs": {
