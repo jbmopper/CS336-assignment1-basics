@@ -379,54 +379,28 @@ class Trainer:
 
         return log
 
+    def _save_checkpoint_atomic(self, step, filename, timer_label):
+        """Save checkpoint atomically (write to tmp, then rename)."""
+        log = {}
+        path = f"{self.config['checkpoint_dir']}/{filename}"
+        tmp_path = path + ".tmp"
+        with timer(timer_label, log, device=self.timer_device):
+            save_checkpoint(self.model, self.optimizer, step, tmp_path, self.config)
+            os.replace(tmp_path, path)
+        return log
+
     def _save_latest_checkpoint(self, step):
         """Save latest checkpoint (for crash recovery)."""
-        log = {}
-        with timer("Time/Checkpoint save (latest)", log, device=self.timer_device):
-            save_checkpoint(
-                self.model,
-                self.optimizer,
-                step,
-                f"{self.config['checkpoint_dir']}/latest.pt",
-                self.config,
-            )
-        return log
+        return self._save_checkpoint_atomic(step, "latest.pt", "Time/Checkpoint save (latest)")
 
     def _save_snapshot_checkpoint(self, step):
         """Save snapshot checkpoint at save_every intervals."""
-        log = {}
-        with timer("Time/Checkpoint save (snapshot)", log, device=self.timer_device):
-            save_checkpoint(
-                self.model,
-                self.optimizer,
-                step,
-                f"{self.config['checkpoint_dir']}/checkpoint_{step}.pt",
-                self.config,
-            )
-        return log
+        return self._save_checkpoint_atomic(step, f"checkpoint_{step}.pt", "Time/Checkpoint save (snapshot)")
 
     def _save_best_checkpoint(self, step):
         """Save best checkpoint based on eval loss."""
-        log = {}
-        with timer("Time/Checkpoint save (best)", log, device=self.timer_device):
-            save_checkpoint(
-                self.model,
-                self.optimizer,
-                step,
-                f"{self.config['checkpoint_dir']}/best.pt",
-                self.config,
-            )
-        return log
+        return self._save_checkpoint_atomic(step, "best.pt", "Time/Checkpoint save (best)")
 
     def _save_final_checkpoint(self, step):
         """Save final checkpoint after training."""
-        log = {}
-        with timer("Time/Checkpoint save (final)", log, device=self.timer_device):
-            save_checkpoint(
-                self.model,
-                self.optimizer,
-                step,
-                f"{self.config['checkpoint_dir']}/final.pt",
-                self.config,
-            )
-        return log
+        return self._save_checkpoint_atomic(step, "final.pt", "Time/Checkpoint save (final)")

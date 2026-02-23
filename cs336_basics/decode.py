@@ -126,12 +126,12 @@ def main():
                 token_ids = sample_top_p(pred_logit, args.temperature, args.top_p_threshold)
                 token_id = token_ids[0].item()
 
-                if token_id == eos_id:
-                    break
+                # if token_id == eos_id:
+                #    break
 
                 new_text = tokenizer.decode([token_id])
-                if eos_string in output and output.endswith(eos_string):
-                    break
+                # if eos_string in output and output.endswith(eos_string):
+                #    break
                 output = output + new_text
                 print(new_text, end="", flush=True)
 
