@@ -2,8 +2,6 @@
 # Periodically sync outputs to S3.
 # Usage: ./sync_outputs.sh s3://bucket/path /local/dir [interval_seconds]
 
-set -euo pipefail
-
 S3_DEST="${1:-}"
 SRC_DIR="${2:-}"
 INTERVAL="${3:-300}"
@@ -22,13 +20,15 @@ EXCLUDES=(
   "--exclude" "*.tmp"
   "--exclude" "*.partial"
   "--exclude" "*.incomplete"
-  "--exclude" "latest.pt"  # Skip crash-recovery checkpoint (updated every iteration)
 )
 
 sync_once() {
   echo "[sync] $(date -u +"%Y-%m-%dT%H:%M:%SZ") syncing ${SRC_DIR} -> ${S3_DEST}"
-  aws s3 sync "${SRC_DIR}" "${S3_DEST}" --no-progress "${EXCLUDES[@]}"
-  echo "[sync] done"
+  if aws s3 sync "${SRC_DIR}" "${S3_DEST}" --no-progress "${EXCLUDES[@]}"; then
+    echo "[sync] done"
+  else
+    echo "[sync] FAILED (exit $?) — will retry next cycle"
+  fi
 }
 
 if [[ "${INTERVAL}" == "0" || "${RUN_ONCE:-0}" == "1" ]]; then
