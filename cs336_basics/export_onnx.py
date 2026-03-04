@@ -104,7 +104,7 @@ def _validate_export(onnx_path: Path, model: TransformerLM, sample_input: torch.
         return None
 
     with torch.inference_mode():
-        torch_out = model(sample_input).cpu().numpy()
+        torch_out = model(sample_input)[0].cpu().numpy()
 
     sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     ort_inputs = {"input_ids": sample_input.cpu().numpy().astype(np.int64)}

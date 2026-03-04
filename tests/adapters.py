@@ -154,7 +154,7 @@ def run_multihead_self_attention(
     msa.k_proj_weights.data.copy_(k_proj_weight)
     msa.v_proj_weights.data.copy_(v_proj_weight)
     msa.o_proj_weights.data.copy_(o_proj_weight)
-    return msa.forward(in_features)
+    return msa.forward(in_features)[0]
 
 
 def run_multihead_self_attention_with_rope(
@@ -199,7 +199,7 @@ def run_multihead_self_attention_with_rope(
     mr.k_proj_weights.data.copy_(k_proj_weight)
     mr.v_proj_weights.data.copy_(v_proj_weight)
     mr.o_proj_weights.data.copy_(o_proj_weight)
-    return mr.forward(in_features, token_positions)
+    return mr.forward(in_features, token_positions)[0]
 
 
 def run_rope(
@@ -281,7 +281,7 @@ def run_transformer_block(
     sd["attn.v_proj_weights"] = weights["attn.v_proj.weight"]
     sd["attn.o_proj_weights"] = weights["attn.output_proj.weight"]
     tb.load_state_dict(sd)
-    return tb.forward(in_features)
+    return tb.forward(in_features)[0]
 
 
 def run_transformer_lm(
@@ -342,7 +342,7 @@ def run_transformer_lm(
         sd[f"layers.{i}.attn.o_proj_weights"] = weights[f"layers.{i}.attn.output_proj.weight"]
 
     tl.load_state_dict(sd)
-    return tl.forward(in_indices)
+    return tl.forward(in_indices)[0]
 
 
 def run_rmsnorm(
