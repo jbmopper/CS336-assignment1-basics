@@ -196,25 +196,39 @@ class Multihead(nn.Module):
         torch.nn.init.trunc_normal_(self.o_proj_weights, 0, sigma, -3 * sigma, 3 * sigma)
 
     def forward(
-        self, in_features: Float[Tensor, "... sequence_length d_in"]
-    ) -> Float[Tensor, "... sequence_length d_out"]:
-        qkv_weights = einx.rearrange(
-            "dm dk, dm dk, dm dk -> dm (dk + dk + dk)",
-            self.q_proj_weights.T, self.k_proj_weights.T, self.v_proj_weights.T
-        )
-        QKV = in_features @ qkv_weights
+        self,
+        in_features: Float[Tensor, "... sequence_length d_in"],
+        k_v_cache=None # or 2ple of Float[Tensor, "... num_heads hist d_head"]
+    ) -> tuple[Float[Tensor, "... sequence_length d_out"], tuple]:
         head_dim = self.d_model // self.num_heads
-        Q, K, V = einx.rearrange("... sl (dk + dk + dk) -> ... sl dk, ... sl dk, ... sl dk", QKV)
-        Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=head_dim)
-        K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=head_dim)
-        V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=head_dim)
 
-        mask = torch.ones((Q.size(-2), Q.size(-2)), dtype=bool, device=Q.device)
+        if k_v_cache is not None:
+            # in_features: [... 1 d_model]
+            Q     = in_features @ self.q_proj_weights.T                          # [... 1 d_model]
+            k_next = in_features[..., -1:, :] @ self.k_proj_weights.T           # [... 1 d_model]
+            v_next = in_features[..., -1:, :] @ self.v_proj_weights.T           # [... 1 d_model]
+            Q      = einx.rearrange("... sl (h dq) -> ... h sl dq", Q,      h=self.num_heads, dq=head_dim)
+            k_next = einx.rearrange("... sl (h dk) -> ... h sl dk", k_next,  h=self.num_heads, dk=head_dim)
+            v_next = einx.rearrange("... sl (h dv) -> ... h sl dv", v_next,  h=self.num_heads, dv=head_dim)
+            K = torch.cat((k_v_cache[0], k_next), dim=-2)  # [... h hist+1 d_head]
+            V = torch.cat((k_v_cache[1], v_next), dim=-2)  # [... h hist+1 d_head]
+        else:
+            qkv_weights = einx.rearrange(
+                "dm dk, dm dk, dm dk -> dm (dk + dk + dk)",
+                self.q_proj_weights.T, self.k_proj_weights.T, self.v_proj_weights.T
+            )
+            QKV = in_features @ qkv_weights
+            Q, K, V = einx.rearrange("... sl (dk + dk + dk) -> ... sl dk, ... sl dk, ... sl dk", QKV)
+            Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=head_dim)
+            K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=head_dim)
+            V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=head_dim)
+
+        mask = torch.ones((Q.size(-2), K.size(-2)), dtype=bool, device=Q.device)
         mask = torch.tril(mask)
 
         sdpa = scaled_dot_product_attention(Q, K, V, mask)
         sdpa = einx.rearrange("... h sl d -> ... sl (h d)", sdpa)
-        return sdpa @ self.o_proj_weights.T
+        return sdpa @ self.o_proj_weights.T, (K, V)
 
 
 class MultiheadRope(nn.Module):
@@ -245,25 +259,40 @@ class MultiheadRope(nn.Module):
     def forward(
         self,
         in_features: Float[Tensor, "... sequence_length d_in"],
-        token_positions: Int[Tensor, "... sequence_length"]
-    ) -> Float[Tensor, "... sequence_length d_out"]:
-        qkv_weights = einx.rearrange(
-            "dm dk, dm dk, dm dk -> dm (dk + dk + dk)",
-            self.q_proj_weights.T, self.k_proj_weights.T, self.v_proj_weights.T
-        )
-        QKV = in_features @ qkv_weights
-        Q, K, V = einx.rearrange("... sl (dk + dk + dk) -> ... sl dk, ... sl dk, ... sl dk", QKV)
-        Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=self.d_head)
-        K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=self.d_head)
-        V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=self.d_head)
+        token_positions: Int[Tensor, "... sequence_length"],
+        k_v_cache=None # or 2ple of Float[Tensor, "... num_heads hist d_head"]
+    ) -> tuple[Float[Tensor, "... sequence_length d_out"], tuple]:
 
-        Q = self.rope.forward(Q, token_positions)
-        K = self.rope.forward(K, token_positions)
+        if k_v_cache is not None:
+            # in_features: [... 1 d_model], token_positions: [... 1] (position of new token)
+            Q = in_features @ self.q_proj_weights.T                             # [... 1 d_model]
+            k_next = (in_features[..., -1:, :] @ self.k_proj_weights.T)        # [... 1 d_model]
+            v_next = (in_features[..., -1:, :] @ self.v_proj_weights.T)        # [... 1 d_model]
+            Q     = einx.rearrange("... sl (h dq) -> ... h sl dq", Q,     h=self.num_heads, dq=self.d_head)
+            k_next = einx.rearrange("... sl (h dk) -> ... h sl dk", k_next, h=self.num_heads, dk=self.d_head)
+            v_next = einx.rearrange("... sl (h dv) -> ... h sl dv", v_next, h=self.num_heads, dv=self.d_head)
+            # apply RoPE at new token position only, then append to post-RoPE cache
+            Q      = self.rope.forward(Q,      token_positions)
+            k_next = self.rope.forward(k_next, token_positions)
+            K = torch.cat((k_v_cache[0], k_next), dim=-2)  # [... h hist+1 d_head]
+            V = torch.cat((k_v_cache[1], v_next), dim=-2)  # [... h hist+1 d_head]
+        else:
+            qkv_weights = einx.rearrange(
+                "dm dk, dm dk, dm dk -> dm (dk + dk + dk)",
+                self.q_proj_weights.T, self.k_proj_weights.T, self.v_proj_weights.T
+            )
+            QKV = in_features @ qkv_weights
+            Q, K, V = einx.rearrange("... sl (dk + dk + dk) -> ... sl dk, ... sl dk, ... sl dk", QKV)
+            Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=self.d_head)
+            K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=self.d_head)
+            V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=self.d_head)
+            Q = self.rope.forward(Q, token_positions)
+            K = self.rope.forward(K, token_positions)
 
-        mask = torch.ones((Q.size(-2), Q.size(-2)), dtype=bool, device=Q.device)
+        mask = torch.ones((Q.size(-2), K.size(-2)), dtype=bool, device=Q.device)
         mask = torch.tril(mask)
 
         sdpa = scaled_dot_product_attention(Q, K, V, mask)
         sdpa = einx.rearrange("... h sl d -> ... sl (h d)", sdpa)
-        return sdpa @ self.o_proj_weights.T
+        return sdpa @ self.o_proj_weights.T, (K, V)
 

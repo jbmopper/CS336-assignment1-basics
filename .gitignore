@@ -163,6 +163,7 @@ cython_debug/
 *.zip
 data
 .DS_Store
+.serena
 
 # ===========================================
 # Training artifacts - these get large!

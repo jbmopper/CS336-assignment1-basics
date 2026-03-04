@@ -83,37 +83,45 @@ class TransformerBlock(nn.Module):
         else:
             self.attn = Multihead(self.num_heads, self.d_model)
 
-    def forward(self, in_features: Float[Tensor, "... seq d_model"]) -> Float[Tensor, "... seq d_model"]:
+    def forward(
+        self,
+        in_features: Float[Tensor, "... seq d_model"],
+        k_v_cache=None # or 2ple of Float[Tensor, "... num_heads hist d_head"]
+    ) -> tuple[Float[Tensor, "... seq d_model"], tuple]:
         with torch.profiler.record_function("## TRANSFORMER_BLOCK_FORWARD ##"):
-            token_positions = torch.arange(in_features.size(-2), device=in_features.device, dtype=torch.long)
+            seq_start = k_v_cache[0].size(-2) if k_v_cache is not None else 0
+            token_positions = torch.arange(
+                seq_start, seq_start + in_features.size(-2),
+                device=in_features.device, dtype=torch.long
+            )
 
         if self.norm_mode == "pre":
             norm1 = self.ln1.forward(in_features)
             if self.use_rope:
-                attention_output = self.attn.forward(norm1, token_positions)
+                attention_output, new_cache = self.attn.forward(norm1, token_positions, k_v_cache)
             else:
-                attention_output = self.attn.forward(norm1)
+                attention_output, new_cache = self.attn.forward(norm1, k_v_cache)
             in_features = in_features + attention_output
             norm2 = self.ln2.forward(in_features)
             ffn_output = self.ffn.forward(norm2)
-            return in_features + ffn_output
+            return in_features + ffn_output, new_cache
 
         if self.norm_mode == "post":
             if self.use_rope:
-                attention_output = self.attn.forward(in_features, token_positions)
+                attention_output, new_cache = self.attn.forward(in_features, token_positions, k_v_cache)
             else:
-                attention_output = self.attn.forward(in_features)
+                attention_output, new_cache = self.attn.forward(in_features, k_v_cache)
             in_features = self.ln1.forward(in_features + attention_output)
             ffn_output = self.ffn.forward(in_features)
-            return self.ln2.forward(in_features + ffn_output)
+            return self.ln2.forward(in_features + ffn_output), new_cache
 
         if self.use_rope:
-            attention_output = self.attn.forward(in_features, token_positions)
+            attention_output, new_cache = self.attn.forward(in_features, token_positions, k_v_cache)
         else:
-            attention_output = self.attn.forward(in_features)
+            attention_output, new_cache = self.attn.forward(in_features, k_v_cache)
         in_features = in_features + attention_output
         ffn_output = self.ffn.forward(in_features)
-        return in_features + ffn_output
+        return in_features + ffn_output, new_cache
 
 
 class TransformerLM(nn.Module):
@@ -167,13 +175,19 @@ class TransformerLM(nn.Module):
         self.lm_head = Linear(d_model, vocab_size)
         self.token_embeddings = Embedding(vocab_size, d_model)
 
-    def forward(self, in_indices: Int[Tensor, "batch seq"]) -> Float[Tensor, "batch seq vocab"]:
+    def forward(
+        self,
+        in_indices: Int[Tensor, "batch seq"],
+        k_v_cache=None #list of tuples of 2 Float[Tensor, "batch num_heads hist d_head"]
+    ) -> tuple[Float[Tensor, "batch seq vocab"], list]:
         with torch.profiler.record_function("## TRANSFORMER_LM_FORWARD ##"):
             x = self.token_embeddings.forward(in_indices)
-            for layer in self.layers:
-                x = layer.forward(x)
+            if k_v_cache is None:
+                k_v_cache = [None] * len(self.layers)
+            for i, layer in enumerate(self.layers):
+                x, k_v_cache[i] = layer.forward(x, k_v_cache[i])
             x = self.ln_final.forward(x)
-            return self.lm_head.forward(x)
+            return self.lm_head.forward(x), k_v_cache
 
 
 def get_batch(
