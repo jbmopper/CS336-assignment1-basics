@@ -228,9 +228,6 @@ class Multihead(nn.Module):
             diagonal=k_len - q_len
             mask = torch.tril(mask, diagonal=diagonal)
 
-        mask = torch.ones((Q.size(-2), K.size(-2)), dtype=bool, device=Q.device)
-        mask = torch.tril(mask)
-
         sdpa = scaled_dot_product_attention(Q, K, V, mask)
         sdpa = einx.rearrange("... h sl d -> ... sl (h d)", sdpa)
         return sdpa @ self.o_proj_weights.T, (K, V)
