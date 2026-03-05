@@ -212,6 +212,7 @@ class Multihead(nn.Module):
             v_next = einx.rearrange("... sl (h dv) -> ... h sl dv", v_next,  h=self.num_heads, dv=head_dim)
             K = torch.cat((k_v_cache[0], k_next), dim=-2)  # [... h hist+1 d_head]
             V = torch.cat((k_v_cache[1], v_next), dim=-2)  # [... h hist+1 d_head]
+            mask = None
         else:
             qkv_weights = einx.rearrange(
                 "dm dk, dm dk, dm dk -> dm (dk + dk + dk)",
@@ -222,6 +223,10 @@ class Multihead(nn.Module):
             Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=head_dim)
             K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=head_dim)
             V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=head_dim)
+            q_len, k_len = Q.size(-2), K.size(-2)
+            mask = torch.ones((q_len, k_len), dtype=bool, device=Q.device)
+            diagonal=k_len - q_len
+            mask = torch.tril(mask, diagonal=diagonal)
 
         mask = torch.ones((Q.size(-2), K.size(-2)), dtype=bool, device=Q.device)
         mask = torch.tril(mask)
@@ -276,6 +281,7 @@ class MultiheadRope(nn.Module):
             k_next = self.rope.forward(k_next, token_positions)
             K = torch.cat((k_v_cache[0], k_next), dim=-2)  # [... h hist+1 d_head]
             V = torch.cat((k_v_cache[1], v_next), dim=-2)  # [... h hist+1 d_head]
+            mask = None
         else:
             qkv_weights = einx.rearrange(
                 "dm dk, dm dk, dm dk -> dm (dk + dk + dk)",
@@ -288,9 +294,10 @@ class MultiheadRope(nn.Module):
             V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=self.d_head)
             Q = self.rope.forward(Q, token_positions)
             K = self.rope.forward(K, token_positions)
-
-        mask = torch.ones((Q.size(-2), K.size(-2)), dtype=bool, device=Q.device)
-        mask = torch.tril(mask)
+            q_len, k_len = Q.size(-2), K.size(-2)
+            mask = torch.ones((q_len, k_len), dtype=bool, device=Q.device)
+            diagonal=k_len - q_len
+            mask = torch.tril(mask, diagonal=diagonal)
 
         sdpa = scaled_dot_product_attention(Q, K, V, mask)
         sdpa = einx.rearrange("... h sl d -> ... sl (h d)", sdpa)

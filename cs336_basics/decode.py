@@ -112,16 +112,22 @@ def main():
                 break
 
             output = sub
+            token_id = None
+            k_v_cache = None
             print(output, end="", flush=True)
 
             for _ in range(args.max_new_tokens):
-                input_ids = tokenizer.encode(output)[-context_length:]
+                if k_v_cache is None:
+                    input_ids = tokenizer.encode(output)[-context_length:]
+                else:
+                    input_ids = [token_id]
+
                 if not input_ids:
                     input_ids = [eos_id]
                 inputs = torch.tensor(input_ids, device=config["device"], dtype=torch.long)
                 inputs = inputs.unsqueeze(0)
 
-                logits = model.forward(inputs)
+                logits, k_v_cache = model.forward(inputs, k_v_cache)
                 pred_logit = logits[:, -1, :]
                 token_ids = sample_top_p(pred_logit, args.temperature, args.top_p_threshold)
                 token_id = token_ids[0].item()

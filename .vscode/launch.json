@@ -6,9 +6,9 @@
             "type": "debugpy",
             "request": "launch",
             "module": "cs336_basics.decode",
-            "cwd": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}/cs336_basics",
             "args": [
-                "${workspaceFolder}/checkpoints/latest.pt"
+                "${workspaceFolder}/checkpoints/20260222_234000/model_J_20260223_0142/best.pt"
             ],
             "console": "integratedTerminal",
             "justMyCode": false,
