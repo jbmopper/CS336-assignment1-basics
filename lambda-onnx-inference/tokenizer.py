@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import pickle
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -25,13 +24,6 @@ def load_bpe(tokenizer_dir: str | Path) -> tuple[dict[int, bytes], list[tuple[by
     with merges_path.open("rb") as f:
         merges = pickle.load(f)
     return vocab, merges
-
-
-@dataclass
-class TrieNode:
-    children: dict[bytes, "TrieNode"] = field(default_factory=dict)
-    token_id: int | None = None
-
 
 class Tokenizer:
     def __init__(

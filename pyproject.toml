@@ -29,6 +29,7 @@ dependencies = [
     "marimo",
     "pyzmq>=27.1.0",
     "altair>=6.0.0",
+    "onnx",
 ]
 
 [build-system]
@@ -60,3 +61,4 @@ extend-select = ["UP"]
 ignore = [
     "F722"
 ]
+
