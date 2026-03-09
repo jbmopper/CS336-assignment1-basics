@@ -8,7 +8,6 @@ for inp in session.get_inputs():
     print(inp.name, inp.shape, inp.type)
 
 print("onnx outputs")
-
 for outp in session.get_outputs():
     print(outp.name, outp.shape, outp.type)
 
