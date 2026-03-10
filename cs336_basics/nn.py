@@ -119,8 +119,8 @@ def scaled_dot_product_attention(
     mask: Bool[Tensor, "... queries keys"] | None = None
 ) -> Float[Tensor, "... queries d_v"]:
     """Scaled dot-product attention."""
-    d_k = Q.size(-1)
-    scaled_product = (Q @ K.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k, dtype=Q.dtype, device=Q.device))
+    scale = Q.shape[-1] ** -0.5
+    scaled_product = (Q @ K.transpose(-2, -1)) * scale
     if mask is not None:
         scaled_product = scaled_product.masked_fill_(~mask, float('-inf'))
     output = softmax(scaled_product, -1) @ V
