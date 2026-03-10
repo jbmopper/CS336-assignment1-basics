@@ -173,7 +173,7 @@ class Rope(nn.Module):
              torch.stack([sines, coses], dim=-1)),
             dim=-2
         )
-        rotated = einx.dot("a... sl dk2 row col, b... sl dk2 col -> b... sl dk2 row", arrrs, in_pairs)
+        # rotated = einx.dot("a... sl dk2 row col, b... sl dk2 col -> b... sl dk2 row", arrrs, in_pairs)
         rotated = einx.rearrange("... sl dk pair -> ... sl (dk pair)", rotated)
         return rotated
 
@@ -214,12 +214,13 @@ class Multihead(nn.Module):
             V = torch.cat((k_v_cache[1], v_next), dim=-2)  # [... h hist+1 d_head]
             mask = None
         else:
-            qkv_weights = einx.rearrange(
+            qkv_weights = einx.id(
                 "dm dq, dm dk, dm dv -> dm (dq + dk + dv)",
                 self.q_proj_weights.T, self.k_proj_weights.T, self.v_proj_weights.T
             )
             QKV = in_features @ qkv_weights
-            Q, K, V = einx.rearrange("... sl (dk + dk + dk) -> ... sl dk, ... sl dk, ... sl dk", QKV)
+            QKV = in_features @ qkv_weights
+            Q, K, V = einx.id("... sl (dq + dk + dv) -> ... sl dq, ... sl dk, ... sl dv", QKV)            
             Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=head_dim)
             K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=head_dim)
             V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=head_dim)
@@ -280,12 +281,12 @@ class MultiheadRope(nn.Module):
             V = torch.cat((k_v_cache[1], v_next), dim=-2)  # [... h hist+1 d_head]
             mask = None
         else:
-            qkv_weights = einx.rearrange(
-                "dm dk, dm dk, dm dk -> dm (dk + dk + dk)",
+            qkv_weights = einx.id(
+                "dm dq, dm dk, dm dv -> dm (dq + dk + dv)",
                 self.q_proj_weights.T, self.k_proj_weights.T, self.v_proj_weights.T
             )
             QKV = in_features @ qkv_weights
-            Q, K, V = einx.rearrange("... sl (dk + dk + dk) -> ... sl dk, ... sl dk, ... sl dk", QKV)
+            Q, K, V = einx.id("... sl (dq + dk + dv) -> ... sl dq, ... sl dk, ... sl dv", QKV)
             Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=self.d_head)
             K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=self.d_head)
             V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=self.d_head)
