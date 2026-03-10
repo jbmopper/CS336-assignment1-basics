@@ -67,7 +67,7 @@ def _generate(
     max_new_tokens: int,
     temperature: float,
     top_p: float,
-    tokenizer,
+    tokenizer: t.Tokenizer,
     prefill: rt.InferenceSession,
     decode: rt.InferenceSession
 ) -> dict[str, Any]:
@@ -79,24 +79,40 @@ def _generate(
     output = prompt
     generated = 0
 
-    prefill_inputs = [i.name for i in prefill.get_inputs]
-    decode_inputs = [i.name for i in decode.get_inputs]
-    prefill_outputs = [i.name for i in prefill.get_outputs]
-    decode_outputs = [i.name for i in decode.get_outputs]
+    prefill_input_names = [i.name for i in prefill.get_inputs()]
+    decode_input_names = [i.name for i in decode.get_inputs()]
+    prefill_output_names = [i.name for i in prefill.get_outputs()]
+    decode_output_names = [i.name for i in decode.get_outputs()]
+    
 
-    for _ in range(max_new_tokens):
-        ids = tokenizer.encode(output)[-ctx:]
-        model_in = np.asarray([ids], dtype=np.int64)
-        prefill_logits = prefill.run(None, {prefill_inputs[0]: model_in})[0]
-        next_logits = prefill_logits[0, -1, :]
+    encoded_prompt = tokenizer.encode(prompt)[-ctx:]
+    model_in = np.asarray([encoded_prompt], dtype=np.int64)
+    prefill_output = prefill.run(None, {prefill_input_names[0]: model_in})
+    prefill_logits = prefill_output[0]
+    kv = prefill_output[1:]
+    next_logits = prefill_logits[0, -1, :]
+    next_id = _sample_top_p(next_logits, temperature=temperature, top_p=top_p)
+    piece = tokenizer.decode([next_id])
+    generated += 1
+    
+    output = output + piece
+    print(output)
+
+    while generated < max_new_tokens:
+        decode_input = {decode_input_names[0]: next_id}
+        for i, name in enumerate(decode_input_names[1:]):
+            decode_input[name] = kv[i]
+        decode_output = decode.run(None, decode_input)
+        decode_logits = decode_output[0]
+        kv = decode_output[1:]
+        next_logits = decode_logits[0, -1, :]
         next_id = _sample_top_p(next_logits, temperature=temperature, top_p=top_p)
         piece = tokenizer.decode([next_id])
         if piece == eot_token:
-            break
-        output += piece
+            break # pls don't spam endoftext lol
+        print(piece)
         generated += 1
 
-    elapsed_ms = (time.perf_counter() - start) * 1000.0
     completion = output[len(prompt):]
     return {
         "text": output,
@@ -117,6 +133,12 @@ def main():
     prefill = rt.InferenceSession(PREFILL_PATH, providers=["CPUExecutionProvider"])
     decode = rt.InferenceSession(DECODE_PATH, providers=["CPUExecutionProvider"])
     _print_snapshot_io(prefill, decode)
+
+    max_new_tokens = 1024
+    temperature = 1.
+    top_p = .9
+    
+    _generate(PROMPT, max_new_tokens, temperature, top_p, tokenizer, prefill, decode)
     
 
 
