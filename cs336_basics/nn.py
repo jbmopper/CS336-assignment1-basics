@@ -215,7 +215,7 @@ class Multihead(nn.Module):
             mask = None
         else:
             qkv_weights = einx.rearrange(
-                "dm dk, dm dk, dm dk -> dm (dk + dk + dk)",
+                "dm dq, dm dk, dm dv -> dm (dq + dk + dv)",
                 self.q_proj_weights.T, self.k_proj_weights.T, self.v_proj_weights.T
             )
             QKV = in_features @ qkv_weights
