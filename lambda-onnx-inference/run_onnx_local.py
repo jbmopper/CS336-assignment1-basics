@@ -99,7 +99,7 @@ def _generate(
     print(output)
 
     while generated < max_new_tokens:
-        decode_input = {decode_input_names[0]: next_id}
+        decode_input = {decode_input_names[0]: np.asarray([[next_id]], dtype=np.int64)}
         for i, name in enumerate(decode_input_names[1:]):
             decode_input[name] = kv[i]
         decode_output = decode.run(None, decode_input)
