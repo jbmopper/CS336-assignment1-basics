@@ -70,8 +70,7 @@ def _export_onnx(
     batch_size: int,
     seq_len: int,
     opset: int,
-    dynamic: bool,
-) -> tuple[dict[str, dict[int, str]] | None, torch.Tensor]:
+) -> tuple[dict[str, dict[str, dict[int, str]]], torch.Tensor]:
     prefill_out_path.parent.mkdir(parents=True, exist_ok=True)
     decode_out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -84,13 +83,6 @@ def _export_onnx(
         ) for _ in range(model.num_layers)
     ]
     
-    dynamic_axes = None
-    if dynamic:
-        dynamic_axes = {
-            "input_ids": {0: "batch", 1: "seq"},
-            "logits": {0: "batch", 1: "seq"},
-        }
-
     past_cache_names = [
         name
         for i in range(model.num_layers)
@@ -102,6 +94,21 @@ def _export_onnx(
         for name in (f"present_k_{i}", f"present_v_{i}")
     ]
 
+    past_cache_axes = {
+        f"{name}": {0: "batch", 2: "seq"} for name in past_cache_names
+    }
+
+    present_cache_axes = {
+        f"{name}": {0: "batch", 2: "seq"} for name in present_cache_names
+    }
+
+    base_axes = {
+        "input_ids": {0: "batch", 1: "seq"},
+        "logits": {0: "batch", 1: "seq"},
+    }
+    prefill_dynamic_axes = base_axes | present_cache_axes
+    decode_dynamic_axes = base_axes | past_cache_axes | present_cache_axes
+
     with torch.inference_mode():
         torch.onnx.export(
             model,
@@ -112,7 +119,7 @@ def _export_onnx(
             do_constant_folding=True,
             input_names=["input_ids"],
             output_names=["logits"] + present_cache_names,
-            dynamic_axes=dynamic_axes,
+            dynamic_axes=prefill_dynamic_axes,
         )
 
         torch.onnx.export(
@@ -124,10 +131,13 @@ def _export_onnx(
             do_constant_folding=True,
             input_names=["input_ids"] + past_cache_names,
             output_names=["logits"] + present_cache_names,
-            dynamic_axes=dynamic_axes,
+            dynamic_axes=decode_dynamic_axes,
         )
 
-    return dynamic_axes, dummy
+    return {
+        "prefill": prefill_dynamic_axes,
+        "decode": decode_dynamic_axes,
+    }, dummy
 
 
 def _validate_export(onnx_path: Path, model: TransformerLM, sample_input: torch.Tensor) -> dict[str, float] | None:
@@ -165,7 +175,7 @@ def _write_metadata(
     model_cfg: dict[str, Any],
     config: dict[str, Any],
     opset: int,
-    dynamic_axes: dict[str, dict[int, str]] | None,
+    dynamic_axes: dict[str, dict[str, dict[int, str]]],
     validation_metrics: dict[str, float] | None,
 ) -> None:
     metadata = {
@@ -200,11 +210,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=1, help="Dummy batch size used for export.")
     parser.add_argument("--seq-len", type=int, default=64, help="Dummy sequence length used for export.")
     parser.add_argument(
-        "--static-shapes",
-        action="store_true",
-        help="Export fixed-shape graph (default uses dynamic batch/sequence axes).",
-    )
-    parser.add_argument(
         "--skip-validate",
         action="store_true",
         help="Skip ONNXRuntime parity validation.",
@@ -232,7 +237,6 @@ def main() -> None:
         batch_size=args.batch_size,
         seq_len=seq_len,
         opset=args.opset,
-        dynamic=not args.static_shapes,
     )
     print(f"Wrote ONNX: {args.prefill_out}, {args.decode_out}")
 

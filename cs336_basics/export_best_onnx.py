@@ -20,11 +20,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=1, help="Dummy export batch size.")
     parser.add_argument("--seq-len", type=int, default=64, help="Dummy export sequence length.")
     parser.add_argument(
-        "--static-shapes",
-        action="store_true",
-        help="Export fixed-shape graph instead of dynamic axes.",
-    )
-    parser.add_argument(
         "--validate",
         action="store_true",
         help="Run ONNXRuntime parity validation (off by default).",
@@ -105,8 +100,6 @@ def main() -> int:
             "--seq-len",
             str(args.seq_len),
         ]
-        if args.static_shapes:
-            cmd.append("--static-shapes")
         if not args.validate:
             cmd.append("--skip-validate")
 
