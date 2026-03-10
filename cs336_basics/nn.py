@@ -174,6 +174,7 @@ class Rope(nn.Module):
             dim=-2
         )
         # rotated = einx.dot("a... sl dk2 row col, b... sl dk2 col -> b... sl dk2 row", arrrs, in_pairs)
+        rotated = torch.matmul(arrrs, in_pairs.unsqueeze(-1)).squeeze(-1)
         rotated = einx.rearrange("... sl dk pair -> ... sl (dk pair)", rotated)
         return rotated
 
