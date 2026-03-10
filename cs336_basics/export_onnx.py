@@ -75,8 +75,9 @@ def _export_onnx(
     decode_out_path.parent.mkdir(parents=True, exist_ok=True)
 
     d_head = model.d_model // model.num_heads
-    dummy = torch.randint(low=0, high=vocab_size, size=(batch_size, seq_len), dtype=torch.long)
-    kv_dummy = [
+    prefill_mock = torch.randint(low=0, high=vocab_size, size=(batch_size, seq_len), dtype=torch.long)
+    decode_mock = torch.randint(low=0, high=vocab_size, size=(batch_size, 1), dtype=torch.long)
+    kv_cache_mock = [
         (
             torch.rand(size=(batch_size, model.num_heads, seq_len, d_head), dtype=torch.float),
             torch.rand(size=(batch_size, model.num_heads, seq_len, d_head), dtype=torch.float)
@@ -112,7 +113,7 @@ def _export_onnx(
     with torch.inference_mode():
         torch.onnx.export(
             model,
-            dummy,
+            prefill_mock,
             str(prefill_out_path),
             export_params=True,
             opset_version=opset,
@@ -124,7 +125,7 @@ def _export_onnx(
 
         torch.onnx.export(
             model,
-            (dummy, kv_dummy),
+            (decode_mock, kv_cache_mock),
             str(decode_out_path),
             export_params=True,
             opset_version=opset,
@@ -137,10 +138,10 @@ def _export_onnx(
     return {
         "prefill": prefill_dynamic_axes,
         "decode": decode_dynamic_axes,
-    }, dummy
+    }, prefill_mock
 
 
-def _validate_export(onnx_path: Path, model: TransformerLM, sample_input: torch.Tensor) -> dict[str, float] | None:
+def _validate_export(onnx_path: Path, model: TransformerLM, sample_input_mock: torch.Tensor) -> dict[str, float] | None:
     try:
         import onnxruntime as ort
     except Exception:
@@ -148,10 +149,10 @@ def _validate_export(onnx_path: Path, model: TransformerLM, sample_input: torch.
         return None
 
     with torch.inference_mode():
-        torch_out = model(sample_input)[0].cpu().numpy()
+        torch_out = model(sample_input_mock)[0].cpu().numpy()
 
     sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-    ort_inputs = {"input_ids": sample_input.cpu().numpy().astype(np.int64)}
+    ort_inputs = {"input_ids": sample_input_mock.cpu().numpy().astype(np.int64)}
     ort_out = sess.run(["logits"], ort_inputs)[0]
 
     abs_diff = np.abs(torch_out - ort_out)
@@ -229,7 +230,7 @@ def main() -> None:
     if args.batch_size <= 0:
         raise ValueError("batch_size must be > 0")
 
-    dynamic_axes, dummy = _export_onnx(
+    dynamic_axes, prefill_mock = _export_onnx(
         model=model,
         prefill_out_path=args.prefill_out,
         decode_out_path=args.decode_out,
@@ -242,14 +243,14 @@ def main() -> None:
 
     validation = None
     if not args.skip_validate:
-        validation = _validate_export(args.prefill_out, model, dummy)
+        validation = _validate_export(args.prefill_out, model, prefill_mock)
 
     metadata_out = args.metadata_out or args.prefill_out.with_suffix(args.prefill_out.suffix + ".metadata.json")
     _write_metadata(
         metadata_path=metadata_out,
         checkpoint=args.checkpoint,
-        onnx_prefill_path=args.prefill_out,
-        onnx_decode_path=args.decode_out,
+        prefill_onnx_path=args.prefill_out,
+        decode_onnx_path=args.decode_out,
         model_cfg=model_cfg,
         config=config,
         opset=args.opset,

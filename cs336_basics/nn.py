@@ -220,8 +220,13 @@ class Multihead(nn.Module):
                 self.q_proj_weights.T, self.k_proj_weights.T, self.v_proj_weights.T
             )
             QKV = in_features @ qkv_weights
-            QKV = in_features @ qkv_weights
-            Q, K, V = einx.id("... sl (dq + dk + dv) -> ... sl dq, ... sl dk, ... sl dv", QKV)            
+            Q, K, V = einx.id(
+                "... sl (dq + dk + dv) -> ... sl dq, ... sl dk, ... sl dv",
+                QKV,
+                dq=self.d_model,
+                dk=self.d_model,
+                dv=self.d_model,
+            )
             Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=head_dim)
             K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=head_dim)
             V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=head_dim)
@@ -287,7 +292,13 @@ class MultiheadRope(nn.Module):
                 self.q_proj_weights.T, self.k_proj_weights.T, self.v_proj_weights.T
             )
             QKV = in_features @ qkv_weights
-            Q, K, V = einx.id("... sl (dq + dk + dv) -> ... sl dq, ... sl dk, ... sl dv", QKV)
+            Q, K, V = einx.id(
+                "... sl (dq + dk + dv) -> ... sl dq, ... sl dk, ... sl dv",
+                QKV,
+                dq=self.d_model,
+                dk=self.d_model,
+                dv=self.d_model,
+            )
             Q = einx.rearrange("... sl (h dq) -> ... h sl dq", Q, h=self.num_heads, dq=self.d_head)
             K = einx.rearrange("... sl (h dk) -> ... h sl dk", K, h=self.num_heads, dk=self.d_head)
             V = einx.rearrange("... sl (h dv) -> ... h sl dv", V, h=self.num_heads, dv=self.d_head)
