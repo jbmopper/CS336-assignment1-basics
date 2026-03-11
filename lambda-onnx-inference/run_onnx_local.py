@@ -120,7 +120,6 @@ def _generate(
         "completion": completion,
         "tokens_generated": generated,
         "context_length": ctx,
-        "latency_ms": elapsed_ms,
     }
 
 
