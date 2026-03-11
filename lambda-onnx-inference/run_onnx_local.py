@@ -72,7 +72,6 @@ def _generate(
     decode: rt.InferenceSession
 ) -> dict[str, Any]:
 
-
     eot_token = SPECIAL_TOKENS[0]
     ctx = CONTEXT_LENGTH
 
@@ -83,7 +82,6 @@ def _generate(
     decode_input_names = [i.name for i in decode.get_inputs()]
     prefill_output_names = [i.name for i in prefill.get_outputs()]
     decode_output_names = [i.name for i in decode.get_outputs()]
-    
 
     encoded_prompt = tokenizer.encode(prompt)[-ctx:]
     model_in = np.asarray([encoded_prompt], dtype=np.int64)
@@ -124,6 +122,35 @@ def _generate(
 
 
 
+class Inferrer():
+    def __init__(
+        self,
+        tokenzier_path: str,
+        special_tokens: list[str],
+        prefill_snapshot_path: str,
+        decode_snapshot_path: str,
+        max_new_tokens: int,
+        temperature: float,
+        top_p: float,
+    ):
+        self.tokenizer = _setup_tokenizer(tokenzier_path, special_tokens=["<|endoftext|>"])
+        self.prefill = rt.InferenceSession(prefill_snapshot_path, providers=["CPUExecutionProvider"])
+        self.decode = rt.InferenceSession(decode_snapshot_path, providers=["CPUExecutionProvider"])
+        self.max_new_tokens = max_new_tokens
+        self.temperature = temperature
+        self.top_p = top_p
+    def generate(self, prompt) -> dict[str, Any]:
+        return _generate(
+            prompt,
+            self.max_new_tokens,
+            self.temperature,
+            self.top_p,
+            self.tokenizer,
+            self.prefill,
+            self.decode
+        )
+    def print_snapshot_io(self):
+        _print_snapshot_io(self.prefill, self.decode)
 
 
 

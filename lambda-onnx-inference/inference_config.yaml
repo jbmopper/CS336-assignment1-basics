@@ -1,0 +1,34 @@
+model_defaults: &model_defaults
+    model_uri: "s3://cs336-spot-287998774376-us-west-2/inference_lambda/models/"
+    tokenizer_uri: "s3://cs336-spot-287998774376-us-west-2/inference_lambda/tokenizer/"
+    special_tokens: "<|endoftext|>"
+
+models:
+  baseline:
+    name: "Assignment Default"
+    <<: *model_defaults
+  ablation_no_norm:
+    name: "No-Norm Ablation"
+    <<: *model_defaults
+  ablation_nope:
+    name: "No RoPE Ablation"
+    <<: *model_defaults
+  ablation_post_norm:
+    name: "Post-Norm Ablation"
+    <<: *model_defaults
+  ablation_silu: 
+    name: "SiLU Activation Ablation"
+    <<: *model_defaults
+  model_A_wide:
+    name: "\"Model A\" Wide Benchmarking Model"
+    <<: *model_defaults
+  model_B_deep:
+    name: "\"Model B\" Deep Benchmarking Model"
+    <<: *model_defaults
+  model_I:
+    name: "Larger Wide-ish Model"
+    <<: *model_defaults
+  model_J:
+    name: "Larger Deep-ish Model"
+    <<: *model_defaults
+
