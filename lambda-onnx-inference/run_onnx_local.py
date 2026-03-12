@@ -19,7 +19,7 @@ TOKENIZER_PATH = ARTIFACT_BASEPATH + TOKENIZER_BASEPATH
 
 CONTEXT_LENGTH = 256
 SPECIAL_TOKENS = ["<|endoftext|>"]
-PROMPT = " "
+PROMPT = "<|endoftext|>"
 
 
 def _print_snapshot_io(prefill: rt.InferenceSession, decode: rt.InferenceSession):
@@ -75,7 +75,10 @@ def _generate(
     eot_token = SPECIAL_TOKENS[0]
     ctx = CONTEXT_LENGTH
 
-    output = prompt
+    output = prompt.strip()
+    for token in SPECIAL_TOKENS:
+        output = output.replace(token, "")
+   
     generated = 0
 
     prefill_input_names = [i.name for i in prefill.get_inputs()]
@@ -130,26 +133,22 @@ class Inferrer():
         special_tokens: list[str],
         prefill_snapshot_path: str,
         decode_snapshot_path: str,
-        max_new_tokens: int,
-        temperature: float,
-        top_p: float,
     ):
         self.tokenizer = _setup_tokenizer(tokenizer_path, special_tokens=special_tokens)
         self.prefill = rt.InferenceSession(prefill_snapshot_path, providers=["CPUExecutionProvider"])
         self.decode = rt.InferenceSession(decode_snapshot_path, providers=["CPUExecutionProvider"])
-        self.max_new_tokens = max_new_tokens
-        self.temperature = temperature
-        self.top_p = top_p
-    def generate(self, prompt: str) -> dict[str, Any]:
+
+    def generate(self, prompt: str, temperature: float, top_p: float, max_new_tokens: int) -> dict[str, Any]:
         return _generate(
             prompt,
-            self.max_new_tokens,
-            self.temperature,
-            self.top_p,
+            max_new_tokens,
+            temperature,
+            top_p,
             self.tokenizer,
             self.prefill,
             self.decode
         )
+        
     def print_snapshot_io(self):
         _print_snapshot_io(self.prefill, self.decode)
 

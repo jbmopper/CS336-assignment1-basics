@@ -5,6 +5,7 @@ import boto3
 import run_onnx_local as o
 import yaml
 from fastapi import FastAPI, HTTPException
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel
 
 
@@ -21,12 +22,19 @@ app.state.inferrers = {}
 
 
 class GenerateRequest(BaseModel):
-    prompt: str
+    prompt: str = "<|endoftext|>"
+    temperature: float = 1.
+    top_p: float = 0.9
 
 
-@app.post("/warmup/{model_name}")
-def warmup(model_name: str):
-    model_config = config.get(model_name)
+class WarmupRequest(BaseModel):
+    model: str
+
+
+@app.post("/warmup")
+def warmup(req: WarmupRequest):
+    model_name = req.model
+    model_config = config["models"].get(model_name)
     if model_config is None:
         raise HTTPException(status_code=404, detail=f"Model {model_name} not found")
     model_prefix = model_config["model_uri"].rstrip("/")
@@ -46,7 +54,10 @@ def warmup(model_name: str):
         parsed = urlparse(s3_uri)
         local_path.parent.mkdir(parents=True, exist_ok=True)
         if not local_path.exists():
-            s3.download_file(parsed.netloc, parsed.path.lstrip("/"), str(local_path))
+            try:
+                s3.download_file(parsed.netloc, parsed.path.lstrip("/"), str(local_path))
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"S3 download error:\n\n{exc}") 
 
     special_tokens = model_config["special_tokens"]
     if isinstance(special_tokens, str):
@@ -57,9 +68,6 @@ def warmup(model_name: str):
         special_tokens=special_tokens,
         prefill_snapshot_path=str(prefill_path),
         decode_snapshot_path=str(decode_path),
-        max_new_tokens=1024,
-        temperature=1.0,
-        top_p=0.9,
     )
 
     return {"status": "ready", "model_name": model_name}
@@ -68,3 +76,8 @@ def warmup(model_name: str):
 @app.post("/generate/{model_name}")
 def generate(model_name: str, req: GenerateRequest):
     return app.state.inferrers[model_name].generate(req.prompt)
+
+o
+        # max_new_tokens=1024,
+        # temperature=1.0,
+        # top_p=0.9,
