@@ -1,22 +1,70 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from pathlib import Path
+from urllib.parse import urlparse
+
+import boto3
 import run_onnx_local as o
 import yaml
-import boto3
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
-config = yaml.safe_load(open("inference_config.yaml"))
+
+BASE_DIR = Path(__file__).resolve().parent
+DOWNLOAD_ROOT = BASE_DIR / "tmp"
+
+with (BASE_DIR / "inference_config.yaml").open("r", encoding="utf-8") as config_file:
+    config = yaml.safe_load(config_file)
+
 s3 = boto3.client("s3")
 
 app = FastAPI()
-
-@app.get("/warmup")
-def warmup_onnx():
-    
+app.state.inferrers = {}
 
 
+class GenerateRequest(BaseModel):
+    prompt: str
 
 
+@app.post("/warmup/{model_name}")
+def warmup(model_name: str):
+    model_config = config.get(model_name)
+    if model_config is None:
+        raise HTTPException(status_code=404, detail=f"Model {model_name} not found")
+    model_prefix = model_config["model_uri"].rstrip("/")
+    tokenizer_prefix = model_config["tokenizer_uri"].rstrip("/")
+    tokenizer_path = DOWNLOAD_ROOT / "tokenizer"
+    prefill_path = DOWNLOAD_ROOT / "models" / f"{model_name}{o.PREFILL_SUFFIX}"
+    decode_path = DOWNLOAD_ROOT / "models" / f"{model_name}{o.DECODE_SUFFIX}"
+
+    downloads = [
+        (f"{model_prefix}/{model_name}{o.PREFILL_SUFFIX}", prefill_path),
+        (f"{model_prefix}/{model_name}{o.DECODE_SUFFIX}", decode_path),
+        (f"{tokenizer_prefix}/vocab.json", tokenizer_path / "vocab.json"),
+        (f"{tokenizer_prefix}/merges.pkl", tokenizer_path / "merges.pkl"),
+    ]
+
+    for s3_uri, local_path in downloads:
+        parsed = urlparse(s3_uri)
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        if not local_path.exists():
+            s3.download_file(parsed.netloc, parsed.path.lstrip("/"), str(local_path))
+
+    special_tokens = model_config["special_tokens"]
+    if isinstance(special_tokens, str):
+        special_tokens = [special_tokens]
+
+    app.state.inferrers[model_name] = o.Inferrer(
+        tokenizer_path=str(tokenizer_path),
+        special_tokens=special_tokens,
+        prefill_snapshot_path=str(prefill_path),
+        decode_snapshot_path=str(decode_path),
+        max_new_tokens=1024,
+        temperature=1.0,
+        top_p=0.9,
+    )
+
+    return {"status": "ready", "model_name": model_name}
 
 
-
-
+@app.post("/generate/{model_name}")
+def generate(model_name: str, req: GenerateRequest):
+    return app.state.inferrers[model_name].generate(req.prompt)

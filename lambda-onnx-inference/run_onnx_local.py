@@ -108,6 +108,7 @@ def _generate(
         piece = tokenizer.decode([next_id])
         if piece == eot_token:
             break # pls don't spam endoftext lol
+        output += piece
         print(piece)
         generated += 1
 
@@ -125,7 +126,7 @@ def _generate(
 class Inferrer():
     def __init__(
         self,
-        tokenzier_path: str,
+        tokenizer_path: str,
         special_tokens: list[str],
         prefill_snapshot_path: str,
         decode_snapshot_path: str,
@@ -133,13 +134,13 @@ class Inferrer():
         temperature: float,
         top_p: float,
     ):
-        self.tokenizer = _setup_tokenizer(tokenzier_path, special_tokens=["<|endoftext|>"])
+        self.tokenizer = _setup_tokenizer(tokenizer_path, special_tokens=special_tokens)
         self.prefill = rt.InferenceSession(prefill_snapshot_path, providers=["CPUExecutionProvider"])
         self.decode = rt.InferenceSession(decode_snapshot_path, providers=["CPUExecutionProvider"])
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.top_p = top_p
-    def generate(self, prompt) -> dict[str, Any]:
+    def generate(self, prompt: str) -> dict[str, Any]:
         return _generate(
             prompt,
             self.max_new_tokens,

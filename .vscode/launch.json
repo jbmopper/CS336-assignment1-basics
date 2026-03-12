@@ -2,6 +2,20 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "onnx runner",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "cs336_basics.decode",
+            "cwd": "${workspaceFolder}/lambda-onnx-inference",
+            "args": [
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
             "name": "Python: Decode (module)",
             "type": "debugpy",
             "request": "launch",
