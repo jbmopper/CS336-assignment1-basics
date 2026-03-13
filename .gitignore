@@ -192,5 +192,6 @@ wandb/
 o.txt
 model_*_output.txt
 
-# ONNX export artifacts
+# ONNX export and lambda artifacts 
 lambda-onnx-inference/export/
+tmp/
