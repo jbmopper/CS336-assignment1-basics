@@ -95,8 +95,8 @@ def _generate(
     next_id = _sample_top_p(next_logits, temperature=temperature, top_p=top_p)
     piece = tokenizer.decode([next_id])
     generated += 1
-    
-    output = output + piece
+    output += piece
+    yield piece
     print(output)
 
     while generated < max_new_tokens:
@@ -111,18 +111,19 @@ def _generate(
         piece = tokenizer.decode([next_id])
         if piece == eot_token:
             break # pls don't spam endoftext lol
-        output += piece
-        print(piece)
         generated += 1
+        output += piece
+        yield piece
+        print(piece)
 
-    completion = output[len(prompt):]
-    return {
-        "text": output,
-        "prompt": prompt,
-        "completion": completion,
-        "tokens_generated": generated,
-        "context_length": ctx,
-    }
+    # completion = output[len(prompt):]
+    # return {
+    #     "text": output,
+    #     "prompt": prompt,
+    #     "completion": completion,
+    #     "tokens_generated": generated,
+    #     "context_length": ctx,
+    # }
 
 
 
@@ -138,7 +139,7 @@ class Inferrer():
         self.prefill = rt.InferenceSession(prefill_snapshot_path, providers=["CPUExecutionProvider"])
         self.decode = rt.InferenceSession(decode_snapshot_path, providers=["CPUExecutionProvider"])
 
-    def generate(self, prompt: str, temperature: float, top_p: float, max_new_tokens: int) -> dict[str, Any]:
+    def generate(self, prompt: str, max_new_tokens: int, temperature: float, top_p: float) -> dict[str, Any]:
         return _generate(
             prompt,
             max_new_tokens,

@@ -1,6 +1,6 @@
 from pathlib import Path
 from urllib.parse import urlparse
-
+from collections.abc import Iterable
 import boto3
 import run_onnx_local as o
 import yaml
@@ -22,6 +22,7 @@ app.state.inferrers = {}
 
 
 class GenerateRequest(BaseModel):
+    model: str
     prompt: str = "<|endoftext|>"
     temperature: float = 1.
     top_p: float = 0.9
@@ -73,11 +74,14 @@ def warmup(req: WarmupRequest):
     return {"status": "ready", "model_name": model_name}
 
 
-@app.post("/generate/{model_name}")
-def generate(model_name: str, req: GenerateRequest):
-    return app.state.inferrers[model_name].generate(req.prompt)
-
-o
-        # max_new_tokens=1024,
-        # temperature=1.0,
-        # top_p=0.9,
+@app.post("/generate", response_class=EventSourceResponse)
+def generate(req: GenerateRequest) -> Iterable[ServerSentEvent]:
+    for piece in app.state.inferrers[req.model].generate(
+        req.prompt,
+        1024, # max new tokens
+        req.temperature,
+        req.top_p,
+    ):
+        yield ServerSentEvent(data={"token": piece}, event="token")
+        
+    yield ServerSentEvent(data={"done": True}, event="done")
