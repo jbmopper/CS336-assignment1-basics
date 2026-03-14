@@ -164,7 +164,7 @@ class Rope(nn.Module):
         in_query_or_key: Float[Tensor, "... sequence_length d_k"],
         token_positions: Int[Tensor, "... sequence_length"]
     ) -> Float[Tensor, "... sequence_length d_k"]:
-        tps = token_positions[..., :self.max_seq_len]
+        tps = token_positions[..., :self.max_seq_len] # should've cut from other end
         coses = self.coses[tps]
         sines = self.sines[tps]
 
