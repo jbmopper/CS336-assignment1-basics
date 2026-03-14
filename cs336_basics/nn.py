@@ -153,20 +153,20 @@ class Rope(nn.Module):
         self.theta = theta
         self.d_k = d_k
         self.max_seq_len = max_seq_len
-        mthetas = _build_mthetas(theta, d_k, max_seq_len)
-        coses = torch.cos(mthetas)
-        sines = torch.sin(mthetas)
-        self.register_buffer('coses', coses, persistent=False)
-        self.register_buffer('sines', sines, persistent=False)
+        assert d_k % 2 == 0
+        dk2 = d_k // 2
+        exponents = (-2 * torch.arange(dk2, dtype=torch.float32)) / d_k
+        inv_freq = torch.full((dk2,), theta, dtype=torch.float32) ** exponents
+        self.register_buffer('inv_freq', inv_freq, persistent=False)
 
     def forward(
         self,
         in_query_or_key: Float[Tensor, "... sequence_length d_k"],
         token_positions: Int[Tensor, "... sequence_length"]
     ) -> Float[Tensor, "... sequence_length d_k"]:
-        tps = token_positions[..., :self.max_seq_len] # should've cut from other end
-        coses = self.coses[tps]
-        sines = self.sines[tps]
+        angles = token_positions.to(dtype=self.inv_freq.dtype).unsqueeze(-1) * self.inv_freq
+        coses = torch.cos(angles).to(dtype=in_query_or_key.dtype)
+        sines = torch.sin(angles).to(dtype=in_query_or_key.dtype)
 
         # in_pairs = einx.rearrange("... sl (dk2 pair) -> ... sl dk2 pair", in_query_or_key, pair=2)
         in_pairs = in_query_or_key.unflatten(-1, (-1,2))
@@ -322,4 +322,3 @@ class MultiheadRope(nn.Module):
         sdpa = scaled_dot_product_attention(Q, K, V, mask)
         sdpa = sdpa.transpose(-2, -3).flatten(-2)
         return sdpa @ self.o_proj_weights.T, (K, V)
-
